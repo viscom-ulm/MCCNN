@@ -1,7 +1,7 @@
 ### MCCNN: *Monte Carlo Convolution for Learning on Non-Uniformly Sampled Point Clouds*
 Created by <a href="https://www.uni-ulm.de/en/in/mi/institute/mi-mitarbeiter/pedro-hermosilla-casajus/" target="_blank">Pedro Hermosilla</a>, <a href="http://www.homepages.ucl.ac.uk/~ucactri/">Tobias Ritschel</a>, <a href="https://www.cs.upc.edu/~ppau/index.html" target="_blank">Pere-Pau Vazquez</a>, <a href="https://www.cs.upc.edu/~alvar/" target="_blank">Alvar Vinacua</a>, <a href="https://www.uni-ulm.de/in/mi/institut/mi-mitarbeiter/tr/" target="_blank">Timo Ropinski</a>.
 
-![prediction example]()
+![teaser](https://github.com/viscom-ulm/MCCNN/teaser/Teaser.png)
 
 ### Citation
 If you find this code useful please consider citing us:
@@ -27,6 +27,7 @@ First, install <a href="https://www.tensorflow.org/install/">TensorFlow</a>. The
 
 In order to train the networks provided in this repository, first we have to compile the new tensor operations which implement the Monte Carlo convolutions. These operations are located on the folder `tf_ops`. To compile them we should execute the following commands:
 
+    cd tf_ops
     python genCompileScript.py --cudaFolder *path_to_cuda*
     sh compile.sh
 
