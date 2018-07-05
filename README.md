@@ -34,19 +34,40 @@ In order to train the networks provided in this repository, first we have to com
 
 ### Tasks
 
+The network architectures used for the different tasks can be found on the folder `models`, whilst the scripts to train and evaluate such networks can be found on the folders of the different datasets. All scripts can be executed with the argument `--help` to visualize the different options. Some arguments used in our scripts are:
 
+* **Grow:** Determines the growth rate of the number of features in the networks. All layers in the networks produce a number of features which is multiple of this number.
+* **useDropOut:** If this argument is provided, drop out layers are used in the final MLPs in classification and segmentation networks.
+* **dropOutKeepProb:** If this useDropOut is provided, this argument determines the probability to keep the value of a neuron in the MLPs.
+* **useDropOutConv:** If this argument is provided, drop out layers are used before each convolution layer in classification and segmentation networks.
+* **dropOutKeepProbConv:** If useDropOutConv is provided, this argument determines the probability to keep the value of a feature before each convolution layer.
+* **weightDecay:** Scale used in the L2 regularization. If 0.0 is provided, no L2 regularization is performed.
+* **ptDropOut:** Probability of selecting a point during loading of the models in the training phase.
 
 #### Classification
 
+We provide 3 different networks for classification tasks (MCClassSamll, MCClass, and MCClassH) which have been tested on the ModelNet40 dataset (see our <a href="https://arxiv.org/abs/1806.01759">arxiv paper</a> for more details). We used the resampled ModelNet40 dataset provided in <a href="https://github.com/charlesq34/pointnet2">PointNet++</a>, which contains XYZ position and normals for 10k points per model. Once downloaded, uncompress the zip file inside the folder ModelNet and remane the folder to `data`. Then, you can train and evaluate the different networks with the following commands. 
 
-MCClassSmall:   python ModelNet.py --grow 128 --useDropOut
-                python ModelNetEval.py --grow 128
+##### MCClassSmall
 
-MCClass:        python ModelNet.py --model MCClass --useDropOut --useDropOutConv
-                python ModelNetEval.py --model MCClass
+This network is composed of only 3 pooling Monte Carlo convolutions. This is the default model used in the classification script and it can be trained and evaluated using the following commands:
 
-MCClassH:       python ModelNet.py --model MCClassH --useDropOut --useDropOutConv
-                python ModelNetEval.py --model MCClassH
+    python ModelNet.py --grow 128 --useDropOut
+    python ModelNetEval.py --grow 128
+
+##### MCClass
+
+This network is composed of a set of Monte Carlo convolutions on the different levels of the point hierarchy. It can be trained and evaluated using the following commands:
+    
+    python ModelNet.py --model MCClass --useDropOut --useDropOutConv
+    python ModelNetEval.py --model MCClass
+
+##### MCClassH
+
+This network is composed of two different paths which process the different levels of the point hierarchy independly. Whilst one path works directly on the initial point set, the second path works on a lower level on the point hierarchy. It is trained by activating and deactivating these paths in order to be more robust to non-uniformly sampled point clouds. It can be trained and evaluated using the following commands:
+
+    python ModelNet.py --model MCClassH --useDropOut --useDropOutConv
+    python ModelNetEval.py --model MCClassH
 
 #### Segmentation
 
