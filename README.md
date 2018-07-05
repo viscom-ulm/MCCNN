@@ -61,7 +61,7 @@ We provide 3 different networks for classification tasks (MCClassSmall, MCClass,
 #### Segmentation
 We provide a network for segmentation tasks (MCSeg) which have been tested on the ShapeNet dataset. We used the resampled ShapeNet dataset provided in <a href="https://github.com/charlesq34/pointnet2">PointNet++</a>, which contains XYZ position, normals and part label per each point. Once downloaded, uncompress the zip file inside the folder ShapeNet and rename the folder to `shape_data`. Then, you can train and evaluate the networks.
 
-* **MCSeg** This network has a encoder-decoder architecture, in which the decoder part upsamples features from different levels at the same time. It can be trained and evaluated using the following commands:
+**MCSeg** This network has a encoder-decoder architecture, in which the decoder part upsamples features from different levels at the same time. It can be trained and evaluated using the following commands:
 
     python ShapeNet.py --useDropOut
     python ShapeNetEval.py
@@ -73,12 +73,12 @@ The results reported in our paper were obtained by training the network with the
 #### Normal Estimation
 We provide 2 networks for normal estimation tasks (MCNorm, and MCNormSmall) which have been tested on the ModelNet40 dataset. We used the same resampled dataset as the one used in the classification task. Follow the instructions provided on the classification section to download the data. Then, you can train and evaluate the different networks.
 
-* **MCNorm:** Network with an encoder-decoder architecture which outputs 3 floats per point. It can be trained and evaluated using the following commands:
+**MCNorm:** Network with an encoder-decoder architecture which outputs 3 floats per point. It can be trained and evaluated using the following commands:
 
     python ModelNetNormals.py
     python ModelNetNormalsEval.py
 
-* **MCNormSmall:** Small network composed of only two consecutive Monte Carlo convolutions which outputs 3 floats per point. This network was designed to evaluate the performance of our convolutions without considering the point hierarchy used. It can be trained and evaluated using the following commands:
+**MCNormSmall:** Small network composed of only two consecutive Monte Carlo convolutions which outputs 3 floats per point. This network was designed to evaluate the performance of our convolutions without considering the point hierarchy used. It can be trained and evaluated using the following commands:
 
     python ModelNetNormals.py --model MCNormSmall
     python ModelNetNormalsEval.py --model MCNormSmall
