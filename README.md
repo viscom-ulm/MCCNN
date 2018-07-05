@@ -1,7 +1,7 @@
 ### MCCNN: *Monte Carlo Convolution for Learning on Non-Uniformly Sampled Point Clouds*
 Created by <a href="https://www.uni-ulm.de/en/in/mi/institute/mi-mitarbeiter/pedro-hermosilla-casajus/" target="_blank">Pedro Hermosilla</a>, <a href="http://www.homepages.ucl.ac.uk/~ucactri/">Tobias Ritschel</a>, <a href="https://www.cs.upc.edu/~ppau/index.html" target="_blank">Pere-Pau Vazquez</a>, <a href="https://www.cs.upc.edu/~alvar/" target="_blank">Alvar Vinacua</a>, <a href="https://www.uni-ulm.de/in/mi/institut/mi-mitarbeiter/tr/" target="_blank">Timo Ropinski</a>.
 
-![teaser](https://github.com/viscom-ulm/MCCNN/teaser/Teaser.png)
+![teaser](https://github.com/viscom-ulm/MCCNN/blob/master/teaser/Teaser.png)
 
 ### Citation
 If you find this code useful please consider citing us:
