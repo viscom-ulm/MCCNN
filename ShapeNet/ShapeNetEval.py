@@ -50,7 +50,7 @@ def load_model(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, out
             outCatLabels.append([catId])
             outBatchIds.append([batchId])
 
-def load_model_non_uniform_gradient(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, nPoints):
+def load_model_non_uniform_gradient(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels):
     with open(modelsPath+".txt", 'r') as modelFile:
         maxPt = np.array([-10000.0, -10000.0, -10000.0])
         minPt = np.array([10000.0, 10000.0, 10000.0])
@@ -67,57 +67,46 @@ def load_model_non_uniform_gradient(modelsPath, catId, batchId, outPts, outBatch
         if modelSize[2] > modelSize[largAxis]:
             largAxis = 2
 
-    iter = 0
-    while iter < nPoints:
         with open(modelsPath+".txt", 'r') as modelFile:
             probs = []
             for line in modelFile:
-                if iter < nPoints:
-                    line = line.replace("\n", "")
-                    currPoint = line.split()
-                    rndNum = np.random.random()
-                    auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
-                    probVal = (auxPoint[largAxis]-minPt[largAxis]-modelSize[largAxis]*0.2)/(modelSize[largAxis]*0.6)
-                    keepProbModif = pow(np.clip(probVal, 0.01, 1.0), 1.0/2.0)
-                    if rndNum < keepProbModif:
-                        probs.append(keepProbModif)
-                        outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
-                        outFeatures.append([1])
-                        outLabels.append(int(float(currPoint[6])))
-                        outCatLabels.append([catId])
-                        outBatchIds.append([batchId])
-                        iter = iter + 1
-                else: 
-                    break
+                line = line.replace("\n", "")
+                currPoint = line.split()
+                rndNum = np.random.random()
+                auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
+                probVal = (auxPoint[largAxis]-minPt[largAxis]-modelSize[largAxis]*0.2)/(modelSize[largAxis]*0.6)
+                keepProbModif = pow(np.clip(probVal, 0.01, 1.0), 1.0/2.0)
+                if rndNum < keepProbModif:
+                    probs.append(keepProbModif)
+                    outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
+                    outFeatures.append([1])
+                    outLabels.append(int(float(currPoint[6])))
+                    outCatLabels.append([catId])
+                    outBatchIds.append([batchId])
                         
-def load_model_non_uniform_lambert(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, viewDir, nPoints):
-    iter = 0
-    while iter < nPoints:
-        with open(modelsPath+".txt", 'r') as modelFile:
-            maxPt = np.array([-10000.0, -10000.0, -10000.0])
-            minPt = np.array([10000.0, 10000.0, 10000.0])
-            for line in modelFile:
-                if iter < nPoints:
-                    line = line.replace("\n", "")
-                    currPoint = line.split()
-                    auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
-                    auxNormal = np.array([float(currPoint[3]), float(currPoint[4]), float(currPoint[5])])
-                    dotVal = np.dot(viewDir, auxNormal)
-                    dotVal = pow(np.clip(dotVal, 0.0, 1.0), 0.5)
-                    rndNum = np.random.random()
-                    if rndNum < dotVal:
-                        maxPt = np.maximum(auxPoint, maxPt)
-                        minPt = np.minimum(auxPoint, minPt)
-                        outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
-                        outFeatures.append([1])
-                        outLabels.append(int(float(currPoint[6])))
-                        outCatLabels.append([catId])
-                        outBatchIds.append([batchId])
-                        iter = iter + 1
-                else:
-                    break
+def load_model_non_uniform_lambert(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, viewDir):
+    with open(modelsPath+".txt", 'r') as modelFile:
+        maxPt = np.array([-10000.0, -10000.0, -10000.0])
+        minPt = np.array([10000.0, 10000.0, 10000.0])
+        for line in modelFile:
+            line = line.replace("\n", "")
+            currPoint = line.split()
+            auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
+            auxNormal = np.array([float(currPoint[3]), float(currPoint[4]), float(currPoint[5])])
+            dotVal = np.dot(viewDir, auxNormal)
+            dotVal = pow(np.clip(dotVal, 0.0, 1.0), 0.5)
+            rndNum = np.random.random()
+            if rndNum < dotVal:
+                maxPt = np.maximum(auxPoint, maxPt)
+                minPt = np.minimum(auxPoint, minPt)
+                outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
+                outFeatures.append([1])
+                outLabels.append(int(float(currPoint[6])))
+                outCatLabels.append([catId])
+                outBatchIds.append([batchId])
+                    
 
-def load_model_non_uniform_split(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, probPointVal, nPoints):
+def load_model_non_uniform_split(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, probPointVal):
     with open(modelsPath+".txt", 'r') as modelFile:
         maxPt = np.array([-10000.0, -10000.0, -10000.0])
         minPt = np.array([10000.0, 10000.0, 10000.0])
@@ -135,29 +124,23 @@ def load_model_non_uniform_split(modelsPath, catId, batchId, outPts, outBatchIds
             largAxis = 2
 
 
-    iter = 0
-    while iter < nPoints:
-        with open(modelsPath+".txt", 'r') as modelFile:
-            for line in modelFile:
-                if iter < nPoints:
-                    line = line.replace("\n", "")
-                    currPoint = line.split()
-                    rndNum = np.random.random()
-                    auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
-                    probVal = (auxPoint[largAxis]-minPt[largAxis])/modelSize[largAxis]
-                    if probVal > 0.5:
-                        probVal = 1.0
-                    else:
-                        probVal = probPointVal
-                    if rndNum < probVal:
-                        outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
-                        outFeatures.append([1])
-                        outLabels.append(int(float(currPoint[6])))
-                        outCatLabels.append([catId])
-                        outBatchIds.append([batchId])
-                        iter = iter + 1
-                else:
-                    break
+    with open(modelsPath+".txt", 'r') as modelFile:
+        for line in modelFile:
+            line = line.replace("\n", "")
+            currPoint = line.split()
+            rndNum = np.random.random()
+            auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
+            probVal = (auxPoint[largAxis]-minPt[largAxis])/modelSize[largAxis]
+            if probVal > 0.5:
+                probVal = 1.0
+            else:
+                probVal = probPointVal
+            if rndNum < probVal:
+                outPts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
+                outFeatures.append([1])
+                outLabels.append(int(float(currPoint[6])))
+                outCatLabels.append([catId])
+                outBatchIds.append([batchId])
                     
 def saveModelWithLabels(modelName, points, labels): 
     with open(modelName+".ply", 'w') as myFile:
@@ -233,7 +216,6 @@ if __name__ == '__main__':
     parser.add_argument('--grow', default=32, type=int, help='Grow rate (default: 32)')
     parser.add_argument('--inTrainedModel', default='log/model.ckpt', help='Input trained model (default: log/model.ckpt)')
     parser.add_argument('--model', default='MCSeg', help='model (default: MCSeg)')
-    parser.add_argument('--nPoints', default=1024, type=int, help='Grow rate (default: 1024)')
     parser.add_argument('--gpu', default='0', help='GPU (default: 0)')
     parser.add_argument('--gpuMem', default=0.5, type=float, help='GPU memory used (default: 0.5)')
     parser.add_argument('--nExec', default=5, type=int, help='Number of executions per model (default: 5)')
@@ -392,7 +374,7 @@ if __name__ == '__main__':
                 if cat[currCat][1] in currTest:
                     catId = currCat
            
-            load_model_non_uniform_gradient(currTest, catId, 0, points, batchIds, features, catLabels, labels, args.nPoints)
+            load_model_non_uniform_gradient(currTest, catId, 0, points, batchIds, features, catLabels, labels)
            
             predictedLabelsRes, _ = sess.run([predictedLabels, accuracyAccumOp], 
                     {inPts: points, inBatchIds: batchIds, inFeatures: features, inCatLabels: catLabels, 
@@ -456,7 +438,7 @@ if __name__ == '__main__':
 
             auxView = (np.random.rand(3)*2.0)-1.0
             auxView = auxView / np.linalg.norm(auxView)
-            load_model_non_uniform_lambert(currTest, catId, 0, points, batchIds, features, catLabels, labels, auxView, args.nPoints)
+            load_model_non_uniform_lambert(currTest, catId, 0, points, batchIds, features, catLabels, labels, auxView)
 
             predictedLabelsRes, _ = sess.run([predictedLabels, accuracyAccumOp],
                     {inPts: points, inBatchIds: batchIds, inFeatures: features, inCatLabels: catLabels,
@@ -518,7 +500,7 @@ if __name__ == '__main__':
                 if cat[currCat][1] in currTest:
                     catId = currCat
 
-            load_model_non_uniform_split(currTest, catId, 0, points, batchIds, features, catLabels, labels, 0.25, args.nPoints)
+            load_model_non_uniform_split(currTest, catId, 0, points, batchIds, features, catLabels, labels, 0.25)
 
             predictedLabelsRes, _ = sess.run([predictedLabels, accuracyAccumOp],
                     {inPts: points, inBatchIds: batchIds, inFeatures: features, inCatLabels: catLabels,
