@@ -11,6 +11,7 @@
 /// \author pedro hermosilla (pedro-1.hermosilla-casajus@uni-ulm.de)
 /////////////////////////////////////////////////////////////////////////////
 
+
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/shape_inference.h"
@@ -24,6 +25,7 @@ using namespace tensorflow;
 REGISTER_OP("FindNeighbors")
     .Attr("radius: float")
     .Attr("batch_size: int")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("batch_ids: int32")
     .Input("points2: float32")
@@ -41,6 +43,7 @@ REGISTER_OP("FindNeighbors")
     });
 
 unsigned int countNeighborsCPU(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumCells,
     const float pRadius,
@@ -53,6 +56,7 @@ unsigned int countNeighborsCPU(
     int* pStartIndex);
 
 void packNeighborsCPU(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumCells,
@@ -63,8 +67,15 @@ void packNeighborsCPU(
     const int* pCellIndexs,
     const float* pAABBMin,
     const float* pAABBMax,
+    int* pAuxBuffOffsets,
+    int* pAuxBuffOffsets2,
     int* pStartIndexs,
     int* pPackedIndexs);
+    
+void computeAuxiliarBuffersSize(
+    const int pNumPoints,
+    int* PBufferSize1,
+    int* PBufferSize2);
 
 class FindNeighborsOp : public OpKernel {
     public:
@@ -75,13 +86,15 @@ class FindNeighborsOp : public OpKernel {
 
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("FindNeighborsOp expects a positive batch size"));
+
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
         }
 
         void Compute(OpKernelContext* context) override {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0);
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("FindNeighborsOp expects points with the following dimensions (numPoints, 3)"));
+                ("FindNeighborsOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("FindNeighborsOp expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -92,14 +105,14 @@ class FindNeighborsOp : public OpKernel {
             OP_REQUIRES(context, inBatchTensor.dims() == 2 &&
                 inBatchTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0) &&
                 inBatchTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("FindNeighborsOp expects as batch ids input the following dimensions (numPoints, 1)"));
+                ("FindNeighborsOp expects as batch ids input the following dimensions (numPoints)"));
             auto inBatchFlat = inBatchTensor.flat<int>();
             const int* inBatchPtr = &(inBatchFlat(0));
 
             //Process input points.
             const Tensor& inPointsTensor2 = context->input(2);
             OP_REQUIRES(context, inPointsTensor2.dims() == 2, errors::InvalidArgument
-                ("FindNeighborsOp expects points with the following dimensions (numPoints, 3)"));
+                ("FindNeighborsOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor2.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("FindNeighborsOp expects points with three components"));
             int numPoints2 = inPointsTensor2.shape().dim_size(0);
@@ -137,7 +150,7 @@ class FindNeighborsOp : public OpKernel {
             int* startIndexsPtr = &(startIndexsFlat(0));
 
             //Determine the number of neighbors.
-            unsigned int numNeighs = countNeighborsCPU(numPoints, numCells, radius_, 
+            unsigned int numNeighs = countNeighborsCPU(scaleInv_, numPoints, numCells, radius_, 
                 inPointsPtr, inBatchPtr, inPointsPtr2, inCellIdsPtr, inAABBMinPtr, inAABBMaxPtr, startIndexsPtr);
 
             //Create the second output
@@ -145,16 +158,30 @@ class FindNeighborsOp : public OpKernel {
             OP_REQUIRES_OK(context,context->allocate_output(1, TensorShape{numNeighs, 2}, &neighIndexs));
             auto neighIndexsFlat = neighIndexs->flat<int>();
             int* neighIndexsPtr = &(neighIndexsFlat(0));
+            
+            //Create the temporal tensors.
+            int tmpBuff1Size, tmpBuff2Size;
+            computeAuxiliarBuffersSize(numPoints, &tmpBuff1Size, &tmpBuff2Size);
+            Tensor tmpBuff1;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{tmpBuff1Size}, &tmpBuff1));
+            auto tmpBuff1Flat = tmpBuff1.flat<int>();
+            int* tmpBuff1Ptr = &(tmpBuff1Flat(0));
+            Tensor tmpBuff2;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{tmpBuff2Size}, &tmpBuff2));
+            auto tmpBuff2Flat = tmpBuff2.flat<int>();
+            int* tmpBuff2Ptr = &(tmpBuff2Flat(0));
 
             //Pack neighbors
-            packNeighborsCPU(numPoints, numNeighs, numCells, radius_, 
-                inPointsPtr, inBatchPtr, inPointsPtr2, inCellIdsPtr, inAABBMinPtr, inAABBMaxPtr, startIndexsPtr, neighIndexsPtr);
+            packNeighborsCPU(scaleInv_, numPoints, numNeighs, numCells, radius_, 
+                inPointsPtr, inBatchPtr, inPointsPtr2, inCellIdsPtr, inAABBMinPtr, inAABBMaxPtr, 
+                tmpBuff1Ptr, tmpBuff2Ptr, startIndexsPtr, neighIndexsPtr);
         }
 
     private:
 
         float   radius_;
         int     batchSize_;
+        bool    scaleInv_;
 };
 
 REGISTER_KERNEL_BUILDER(Name("FindNeighbors").Device(DEVICE_GPU), FindNeighborsOp);

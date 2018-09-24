@@ -21,8 +21,9 @@
 using namespace tensorflow;
 
 REGISTER_OP("SortPointsStep1")
-    .Attr("num_cells: int")
     .Attr("batch_size: int")
+    .Attr("cell_size: float")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("batch_ids: int32")
     .Input("aabb_min: float32")
@@ -37,23 +38,24 @@ REGISTER_OP("SortPointsStep1")
     });
 
 REGISTER_OP("SortPointsStep2")
-    .Attr("num_cells: int")
     .Attr("batch_size: int")
+    .Attr("cell_size: float")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("batch_ids: int32")
     .Input("features: float32")
     .Input("keys: int32")
     .Input("index_new_pos: int32")
+    .Input("aabb_min: float32")
+    .Input("aabb_max: float32")
     .Output("out_points: float32")
     .Output("out_batch_ids: int32")
     .Output("out_features: float32")
     .Output("cell_indexs: int32")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-        int num_cells;
-        TF_RETURN_IF_ERROR(c->GetAttr("num_cells", &num_cells));
         int batch_size;
         TF_RETURN_IF_ERROR(c->GetAttr("batch_size", &batch_size));
-        shape_inference::ShapeHandle outputDims = c->MakeShape({batch_size, num_cells, num_cells, num_cells, 2});
+        shape_inference::ShapeHandle outputDims = c->MakeShape({batch_size, -1, -1, -1, 2});
         c->set_output(0, c->input(0));
         c->set_output(1, c->input(1));
         c->set_output(2, c->input(2));
@@ -100,6 +102,20 @@ REGISTER_OP("TransformIndexs")
         return Status::OK();
     });
 
+int determineNumCells(
+    const bool pScaleInv,
+    const int pBatchSize,
+    const float pCellSize,
+    const float* pAABBMin, 
+    const float* pAABBMax);
+    
+void computeAuxiliarBuffersSize(
+    const int pBatchSize, 
+    const int pNumCells,
+    int* PBufferSize1,
+    int* PBufferSize2,
+    int* PBufferSize3);
+
 void sortPointsStep1GPUKernel(
     const int pNumPoints, 
     const int pBatchSize,
@@ -108,6 +124,9 @@ void sortPointsStep1GPUKernel(
     const float* pAABBMax, 
     const float* pPoints,
     const int* pBatchIds,
+    int* pAuxBuffCounters,
+    int* pAuxBuffOffsets,
+    int* pAuxBuffOffsets2,
     int* pKeys,
     int* pNewIndexs);
 
@@ -121,6 +140,7 @@ void sortPointsStep2GPUKernel(
     const float* pFeatures,
     const int* pKeys,
     const int* pNewIndexs,
+    int* pAuxBuffer,
     float* pOutPoints,
     int* pOutBatchIds,
     float* pOutFeatures,
@@ -165,19 +185,18 @@ class SortPointsStep1Op : public OpKernel {
     public:
         explicit SortPointsStep1Op(OpKernelConstruction* context) : OpKernel(context) 
         {
-            OP_REQUIRES_OK(context, context->GetAttr("num_cells", &num_cells_));
-            OP_REQUIRES(context, num_cells_ > 0, errors::InvalidArgument("SortPointsStep1Op expects positive number of cells"));
-            OP_REQUIRES(context, num_cells_ <= 128, errors::InvalidArgument("SortPointsStep1Op expects a number of cells smaller or equal to 128"));
-
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
-            OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SortPointsStep1Op expects a positive batch size"));     
+            OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvolutionGradOp expects a positive batch size"));  
+
+            OP_REQUIRES_OK(context, context->GetAttr("cell_size", &cellSize_));
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));   
         }
 
         void Compute(OpKernelContext* context) override {
             //Process input points.
-            const Tensor& inPointsTensor = context->input(0); 
+            const Tensor& inPointsTensor = context->input(0); // Numpoints * 3
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("SortPointsStep1Op expects points with the following dimensions (numPoints, 3)"));
+                ("SortPointsStep1Op expects points with the following dimensions (numPoints, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SortPointsStep1Op expects points with at least three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -188,7 +207,7 @@ class SortPointsStep1Op : public OpKernel {
             OP_REQUIRES(context, inBatchTensor.dims() == 2 &&
                 inBatchTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0) &&
                 inBatchTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("SortPointsStep1Op expects as batch ids input the following dimensions (numPoints, 1)"));
+                ("SortPointsStep1Op expects as batch ids input the following dimensions (numPoints)"));
             auto inBatchFlat = inBatchTensor.flat<int>();
             const int* inBatchPtr = &(inBatchFlat(0));
 
@@ -217,32 +236,53 @@ class SortPointsStep1Op : public OpKernel {
             int* outKeysPtr = &(outKeysFlat(0));
             int* outNewndexsPtr = &(outNewndexsFlat(0));
 
-            sortPointsStep1GPUKernel(numPoints, batchSize_, num_cells_, 
+            int numCells = determineNumCells(scaleInv_, batchSize_, cellSize_, inAABBMinPtr, inAABBMaxPtr);
+            
+            //Create the temporal tensors.
+            int numElemsBuff1, numElemsBuff2, numElemsBuff3;
+            computeAuxiliarBuffersSize(batchSize_, numCells, &numElemsBuff1, &numElemsBuff2, &numElemsBuff3);
+            
+            Tensor tmpBuff1;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{numElemsBuff1}, &tmpBuff1));
+            auto tmpBuff1Flat = tmpBuff1.flat<int>();
+            int* tmpBuff1Ptr = &(tmpBuff1Flat(0));
+            Tensor tmpBuff2;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{numElemsBuff2}, &tmpBuff2));
+            auto tmpBuff2Flat = tmpBuff2.flat<int>();
+            int* tmpBuff2Ptr = &(tmpBuff2Flat(0));
+            Tensor tmpBuff3;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{numElemsBuff3}, &tmpBuff3));
+            auto tmpBuff3Flat = tmpBuff3.flat<int>();
+            int* tmpBuff3Ptr = &(tmpBuff3Flat(0));
+
+            sortPointsStep1GPUKernel(numPoints, batchSize_, numCells, 
                                     inAABBMinPtr, inAABBMaxPtr, 
-                                    inPointsPtr, inBatchPtr, outKeysPtr, outNewndexsPtr);
+                                    inPointsPtr, inBatchPtr, 
+                                    tmpBuff1Ptr, tmpBuff2Ptr, tmpBuff3Ptr,
+                                    outKeysPtr, outNewndexsPtr);
         }
     private:
-        int num_cells_;
         int batchSize_;
+        float cellSize_;
+        bool scaleInv_; 
 };
 
 class SortPointsStep2Op : public OpKernel {
     public:
         explicit SortPointsStep2Op(OpKernelConstruction* context) : OpKernel(context) 
         {
-            OP_REQUIRES_OK(context, context->GetAttr("num_cells", &num_cells_));
-            OP_REQUIRES(context, num_cells_ > 0, errors::InvalidArgument("SortPointsStep2Op expects positive number of cells"));
-            OP_REQUIRES(context, num_cells_ <= 128, errors::InvalidArgument("SortPointsStep2Op expects a number of cells smaller or equal to 128"));
-
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
-            OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SortPointsStep2Op expects a positive batch size"));
+            OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvolutionGradOp expects a positive batch size"));
+
+            OP_REQUIRES_OK(context, context->GetAttr("cell_size", &cellSize_));
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_)); 
         }
 
         void Compute(OpKernelContext* context) override {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0); // Numpoints * 3
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("SortPointsStep2Op expects points with the following dimensions (numPoints, 3)"));
+                ("SortPointsStep2Op expects points with the following dimensions (numPoints, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SortPointsStep2Op expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -254,7 +294,7 @@ class SortPointsStep2Op : public OpKernel {
             OP_REQUIRES(context, inBatchTensor.dims() == 2 &&
                 inBatchTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0) &&
                 inBatchTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("SortPointsStep1Op expects as batch ids input the following dimensions (numPoints, 1)"));
+                ("SortPointsStep1Op expects as batch ids input the following dimensions (numPoints)"));
             auto inBatchFlat = inBatchTensor.flat<int>();
             const int* inBatchPtr = &(inBatchFlat(0));
 
@@ -286,6 +326,23 @@ class SortPointsStep2Op : public OpKernel {
             auto inNewIndexsFlat = inNewIndexsTensor.flat<int>();
             const int* inNewIndexsPtr = &(inNewIndexsFlat(0));
 
+            //Process input bounding box.
+            const Tensor& inAABBMinTensor = context->input(5);   
+            OP_REQUIRES(context, inAABBMinTensor.dims() == 2 
+                && inAABBMinTensor.shape().dim_size(0) == batchSize_ && inAABBMinTensor.shape().dim_size(1) == 3, errors::InvalidArgument
+                ("SortPointsStep2Op expects a minimum point of the bounding box with 3 components"));
+            auto inAABBMinFlat = inAABBMinTensor.flat<float>();
+            const float* inAABBMinPtr = &(inAABBMinFlat(0));
+
+            const Tensor& inAABBMaxTensor = context->input(6);
+            OP_REQUIRES(context, inAABBMaxTensor.dims() == 2  
+                && inAABBMaxTensor.shape().dim_size(0) == batchSize_ && inAABBMaxTensor.shape().dim_size(1) == 3, errors::InvalidArgument
+                ("SortPointsStep2Op expects a maximum point of the bounding box with 3 components"));
+            auto inAABBMaxFlat = inAABBMaxTensor.flat<float>();
+            const float* inAABBMaxPtr = &(inAABBMaxFlat(0));
+
+            int numCells = determineNumCells(scaleInv_, batchSize_, cellSize_, inAABBMinPtr, inAABBMaxPtr);
+
             //Create the output tensors.
             Tensor* outPoints = nullptr;
             Tensor* outBatchIds = nullptr;
@@ -294,7 +351,7 @@ class SortPointsStep2Op : public OpKernel {
             OP_REQUIRES_OK(context,context->allocate_output(0, inPointsTensor.shape(), &outPoints));
             OP_REQUIRES_OK(context,context->allocate_output(1, inBatchTensor.shape(), &outBatchIds));
             OP_REQUIRES_OK(context,context->allocate_output(2, inFeaturesTensor.shape(), &outFeatures));
-            OP_REQUIRES_OK(context,context->allocate_output(3, TensorShape{batchSize_, num_cells_, num_cells_, num_cells_, 2}, &outCellIndexs));
+            OP_REQUIRES_OK(context,context->allocate_output(3, TensorShape{batchSize_, numCells, numCells, numCells, 2}, &outCellIndexs));
             auto outPointsFlat = outPoints->flat<float>();
             auto outBatchIdsFlat = outBatchIds->flat<int>();
             auto outFeaturesFlat = outFeatures->flat<float>();
@@ -303,14 +360,21 @@ class SortPointsStep2Op : public OpKernel {
             int* outBatchIdsPtr = &(outBatchIdsFlat(0));
             float* outFeaturesPtr = &(outFeaturesFlat(0));
             int* outCellIndexsPtr = &(outCellIndexsFlat(0));
+            
+            //Create the temporal tensors.
+            Tensor tmpBuff;
+            OP_REQUIRES_OK(context,context->allocate_temp(DataTypeToEnum<int>::value,TensorShape{numPoints}, &tmpBuff));
+            auto tmpBuffFlat = tmpBuff.flat<int>();
+            int* tmpBuffPtr = &(tmpBuffFlat(0));
 
-            sortPointsStep2GPUKernel(numPoints, batchSize_, numFeatures, num_cells_, inPointsPtr, 
-                inBatchPtr, inFeaturesPtr, inKeysPtr, inNewIndexsPtr, outPointsPtr, outBatchIdsPtr, 
-                outFeaturesPtr, outCellIndexsPtr);
+            sortPointsStep2GPUKernel(numPoints, batchSize_, numFeatures, numCells, inPointsPtr, 
+                inBatchPtr, inFeaturesPtr, inKeysPtr, inNewIndexsPtr, tmpBuffPtr,
+                outPointsPtr, outBatchIdsPtr, outFeaturesPtr, outCellIndexsPtr);
         }
     private:
-        int num_cells_;
         int batchSize_;
+        float cellSize_;
+        bool scaleInv_;
 };
 
 class SortPointsStep2GradOp: public OpKernel{
@@ -329,18 +393,18 @@ class SortPointsStep2GradOp: public OpKernel{
             //Process input output gradients.
             const Tensor& inOutputGradTensor = context->input(1); // Numpoints * 3
             OP_REQUIRES(context, inOutputGradTensor.dims() == 2, errors::InvalidArgument
-                ("SortPointsStep2GradOp expects gradients with the following dimensions (numPoints, 3)"));
+                ("SortPointsStep2Op expects gradients with the following dimensions (numPoints, pointComponents)"));
             OP_REQUIRES(context, inOutputGradTensor.shape().dim_size(1) >= 3, errors::InvalidArgument
-                ("SortPointsStep2GradOp expects gradients with at least three components"));
+                ("SortPointsStep2Op expects gradients with at least three components"));
             auto inOutputGradFlat = inOutputGradTensor.flat<float>();
             const float* inOutputGradPtr = &(inOutputGradFlat(0));
 
             //Process input output feature gradients.
             const Tensor& inOutputFeatureGradTensor = context->input(2); // Numpoints * numFeatures
             OP_REQUIRES(context, inOutputFeatureGradTensor.dims() == 2, errors::InvalidArgument
-                ("SortPointsStep2GradOp expects gradients of features with the following dimensions (numPoints, numFeatures)"));
+                ("SortPointsStep2Op expects gradients of features with the following dimensions (numPoints, numFeatures)"));
             OP_REQUIRES(context, inOutputFeatureGradTensor.shape().dim_size(1) > 0 , errors::InvalidArgument
-                ("SortPointsStep2GradOp expects gradients of features with at least one component"));
+                ("SortPointsStep2Op expects gradients of features with at least one component"));
             int numFeatures = inOutputFeatureGradTensor.shape().dim_size(1);
             auto inOutputFeatureGradFlat = inOutputFeatureGradTensor.flat<float>();
             const float* inOutputFeatureGradPtr = &(inOutputFeatureGradFlat(0));
@@ -434,7 +498,7 @@ class TransformIndexsOp: public OpKernel{
         explicit TransformIndexsOp(OpKernelConstruction * context):OpKernel(context){}
     
         void Compute(OpKernelContext * context)override{
-            //Process indexs to transform.
+            //Process indexs to transform. 
             const Tensor& inStartIndexsTensor = context->input(0);
             OP_REQUIRES(context, inStartIndexsTensor.dims() == 1, errors::InvalidArgument
                 ("TransformIndexsOp expects indexs with the following dimensions (numPoints)"));

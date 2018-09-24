@@ -14,26 +14,24 @@ import sys
 import math
 import time
 import argparse
-import copy
-import random 
 import importlib
 import os
-import json
-from os import listdir
-from os.path import isfile, isdir, join
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import debug as tf_debug
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
+
+from PyUtils import visualize_progress
+from ShapeNetDataSet import ShapeNetDataSet
 
 current_milli_time = lambda: time.time() * 1000.0
 
 
 def create_loss(logits, labels, weigthDecay):
-    labels = tf.to_int64(labels)
+    labels = tf.to_int64(tf.reshape(labels, [-1]))
     cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits, name='xentropy')
     xentropyloss = tf.reduce_mean(cross_entropy, name='xentropy_mean')
     regularizer = tf.contrib.layers.l2_regularizer(scale=weigthDecay)
@@ -45,7 +43,7 @@ def create_loss(logits, labels, weigthDecay):
 def create_accuracy(logits, labels, scope):
     _, logitsIndexs = tf.nn.top_k(logits)
     with tf.variable_scope(scope):
-        return tf.metrics.accuracy(tf.reshape(labels, [-1, 1]), logitsIndexs)
+        return tf.metrics.accuracy(labels, logitsIndexs)
 
 
 def create_trainning(lossGraph, learningRate, maxLearningRate, learningDecayFactor, learningRateDecay, global_step):
@@ -58,67 +56,6 @@ def create_trainning(lossGraph, learningRate, maxLearningRate, learningDecayFact
     return train_op, learningRateExp
 
 
-def load_model(modelsPath, catId, batchId, outPts, outBatchIds, outFeatures, outCatLabels, outLabels, keepPointProb, augmentData, training):
-    with open(modelsPath+".txt", 'r') as modelFile:
-        maxPt = np.array([-10000.0, -10000.0, -10000.0])
-        minPt = np.array([10000.0, 10000.0, 10000.0])
-        pts = []
-        for line in modelFile:
-            rndNum = np.random.random()
-            if rndNum < keepPointProb:
-                line = line.replace("\n", "")
-                currPoint = line.split()
-                auxPoint = np.array([float(currPoint[0]), float(currPoint[1]), float(currPoint[2])])
-                maxPt = np.maximum(auxPoint, maxPt)
-                minPt = np.minimum(auxPoint, minPt)
-                pts.append([auxPoint[0], auxPoint[1], auxPoint[2]])
-                outFeatures.append([1])
-                outLabels.append(int(float(currPoint[6])))
-                outCatLabels.append([catId])
-                outBatchIds.append([batchId])
-
-        modelSize = np.subtract(maxPt, minPt)
-        for pt in pts:
-            if training and augmentData:
-                displ = np.multiply(np.random.randn(3), modelSize*0.005)
-            else:
-                displ = [0.0, 0.0, 0.0]
-            outPts.append([pt[0]+displ[0], pt[1]+displ[1], pt[2]+displ[2]])
-            
-def get_train_and_test_files():
-    #Determine the number of categories.
-    cat = []
-    with open("./shape_data/synsetoffset2category.txt", 'r') as nameFile:
-        for line in nameFile:
-            strings = line.replace("\n", "").split("\t")
-            cat.append((strings[0], strings[1]))
-    print(cat)
-    segClasses = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43], 'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 
-        'Cap': [6, 7], 'Skateboard': [44, 45, 46], 'Mug': [36, 37], 'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27], 'Table': [47, 48, 49], 
-        'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40], 'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
-
-    #List of files
-    trainFiles = []
-    with open("./shape_data/train_test_split/shuffled_train_file_list.json", 'r') as f:
-        trainFiles = list([d for d in json.load(f)])
-    valFiles = []
-    with open("./shape_data/train_test_split/shuffled_val_file_list.json", 'r') as f:
-        valFiles = list([d for d in json.load(f)])
-    testFiles = []
-    with open("./shape_data/train_test_split/shuffled_test_file_list.json", 'r') as f:
-        testFiles = list([d for d in json.load(f)])
-    trainFiles = trainFiles + valFiles
-
-    return cat, segClasses, trainFiles, testFiles
-
-def visualize_progress(val, maxVal, description="", barWidth=20):
-
-    progress = int((val*barWidth) / maxVal)
-    progressBar = ['='] * (progress) + ['>'] + ['.'] * (barWidth - (progress+1))
-    progressBar = ''.join(progressBar)
-    initBar = "%4d/%4d" % (val + 1, maxVal)
-    print(initBar + ' [' + progressBar + '] ' + description)
-
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Script to train MCCNN for segmentation tasks (ShapeNet)')
@@ -126,10 +63,10 @@ if __name__ == '__main__':
     parser.add_argument('--model', default='MCSeg', help='model (default: MCSeg)')
     parser.add_argument('--grow', default=32, type=int, help='Grow rate (default: 32)')
     parser.add_argument('--batchSize', default=32, type=int, help='Batch size  (default: 32)')
-    parser.add_argument('--maxEpoch', default=200, type=int, help='Max Epoch  (default: 200)')
+    parser.add_argument('--maxEpoch', default=201, type=int, help='Max Epoch  (default: 201)')
     parser.add_argument('--initLearningRate', default=0.005, type=float, help='Init learning rate  (default: 0.005)')
     parser.add_argument('--learningDeacyFactor', default=0.2, type=float, help='Learning deacy factor (default: 0.2)')
-    parser.add_argument('--learningDecayRate', default=25, type=int, help='Learning decay rate  (default: 25 Epochs)')
+    parser.add_argument('--learningDecayRate', default=15, type=int, help='Learning decay rate  (default: 15 Epochs)')
     parser.add_argument('--maxLearningRate', default=0.00001, type=float, help='Maximum Learning rate (default: 0.00001)')
     parser.add_argument('--useDropOut', action='store_true', help='Use drop out  (default: True)')
     parser.add_argument('--dropOutKeepProb', default=0.5, type=float, help='Keep neuron probabillity drop out  (default: 0.5)')
@@ -138,6 +75,7 @@ if __name__ == '__main__':
     parser.add_argument('--weightDecay', default=0.0, type=float, help='Weight decay (default: 0.0)')
     parser.add_argument('--ptDropOut', default=0.8, type=float, help='Point drop out (default: 0.8)')
     parser.add_argument('--augment', action='store_true', help='Augment data (default: False)')
+    parser.add_argument('--nonunif', action='store_true', help='Train on non-uniform (default: False)')
     parser.add_argument('--gpu', default='0', help='GPU (default: 0)')
     parser.add_argument('--gpuMem', default=0.5, type=float, help='GPU memory used (default: 0.5)')
     args = parser.parse_args()
@@ -165,6 +103,7 @@ if __name__ == '__main__':
         myFile.write("WeightDecay: "+str(args.weightDecay)+"\n")
         myFile.write("ptDropOut: "+str(args.ptDropOut)+"\n")
         myFile.write("Augment: "+str(args.augment)+"\n")
+        myFile.write("Nonunif: "+str(args.nonunif)+"\n")
 
     print("Model: "+args.model)
     print("Grow: "+str(args.grow))
@@ -181,17 +120,35 @@ if __name__ == '__main__':
     print("WeightDecay: "+str(args.weightDecay))
     print("ptDropOut: "+str(args.ptDropOut))
     print("Augment: "+str(args.augment))
+    print("Nonunif: "+str(args.nonunif))
 
     #Load the model
     model = importlib.import_module(args.model)
 
     #Get train and test files
-    cat, segClasses, trainFiles, testFiles = get_train_and_test_files()
-    numTrainModels = len(trainFiles)
+    allowedSamplingsTrain=[]
+    allowedSamplingsTest=[]
+    if args.nonunif:
+        allowedSamplingsTrain = [1, 2, 3, 4]
+        allowedSamplingsTest = [0, 1, 2, 3, 4]
+    else:
+        allowedSamplingsTrain = [0]
+        allowedSamplingsTest = [0]
+    
+    mTrainDataSet = ShapeNetDataSet(True, args.batchSize, args.ptDropOut, 
+        allowedSamplingsTrain, args.augment)
+    mTestDataSet = ShapeNetDataSet(False, 1, 1.0,
+        allowedSamplingsTest, False)
+    
+    numTrainModels = mTrainDataSet.get_num_models()
     numBatchesXEpoch = numTrainModels/args.batchSize
     if numTrainModels%args.batchSize != 0:
         numBatchesXEpoch = numBatchesXEpoch + 1
-    numTestModels = len(testFiles)
+    numTestModels = mTestDataSet.get_num_models()
+
+    cat = mTrainDataSet.get_categories()
+    segClasses = mTrainDataSet.get_categories_seg_parts()
+    print(segClasses)
     print("Train models: " + str(numTrainModels))
     print("Test models: " + str(numTestModels))
 
@@ -201,7 +158,7 @@ if __name__ == '__main__':
     inBatchIds = tf.placeholder(tf.int32, [None, 1])
     inFeatures = tf.placeholder(tf.float32, [None, 1])
     inCatLabels = tf.placeholder(tf.int32, [None, 1])
-    inLabels = tf.placeholder(tf.int32, [None])
+    inLabels = tf.placeholder(tf.int32, [None, 1])
     isTraining = tf.placeholder(tf.bool)
     keepProbConv = tf.placeholder(tf.float32)
     keepProbFull = tf.placeholder(tf.float32)
@@ -261,7 +218,6 @@ if __name__ == '__main__':
     
     #Train
     for epoch in range(args.maxEpoch):
-        cpyTrainFiles = copy.copy(trainFiles)
 
         startEpochTime = current_milli_time()
         startTrainTime = current_milli_time()
@@ -273,27 +229,11 @@ if __name__ == '__main__':
         sess.run(resetMetrics)
 
         #Iterate over all the train files
-        while len(cpyTrainFiles) > 0:
-    
-            points = []
-            batchIds = []
-            features = []
-            catLabels = []
-            labels = []
-            for i in range(args.batchSize):
-                if len(cpyTrainFiles) > 0:
-                    currentModelIndex = random.randint(0, len(cpyTrainFiles)-1)
+        mTrainDataSet.start_iteration()
+        while mTrainDataSet.has_more_batches():
 
-                    currentModel = cpyTrainFiles[currentModelIndex]
-                    cpyTrainFiles.pop(currentModelIndex)
-                    
-                    catId = 0
-                    for currCat in range(len(cat)):
-                        if cat[currCat][1] in currentModel:
-                            catId = currCat
-                    
-                    load_model(currentModel, catId, i, points, batchIds, features, catLabels, labels, args.ptDropOut, args.augment, True)
-                    
+            _, points, batchIds, features, labels, catLabels, _ = mTrainDataSet.get_next_batch()
+    
             _, lossRes, xentropyLossRes, regularizationLossRes, trainingSummRes, _ = \
                 sess.run([trainning, loss, xentropyLoss, regularizationLoss, trainingSummary, accuracyAccumOp], 
                 {inPts: points, inBatchIds: batchIds, inFeatures: features, inCatLabels: catLabels, inLabels: labels, 
@@ -329,25 +269,19 @@ if __name__ == '__main__':
         with open(logFile, "a") as myfile:
             myfile.write("Epoch %3d  train time: %.4f \n" %(epoch, (endEpochTime-startEpochTime)/1000.0))
 
+        if epoch%10==0:
+            saver.save(sess, args.logFolder+"/model.ckpt")
+
         #Test data
+        it = 0
         accumTestLoss = 0.0
         sess.run(resetMetrics)
         IoUxCat = [[] for i in range(len(cat))]
-        for i in range(numTestModels):
-            currTest = testFiles[i]
-            points = []
-            batchIds = []
-            catLabels = []
-            features = []
-            labels = []
+        mTestDataSet.start_iteration()
+        while mTestDataSet.has_more_batches():
 
-            catId = 0
-            for currCat in range(len(cat)):
-                if cat[currCat][1] in currTest:
-                    catId = currCat
-            
-            load_model(currTest, catId, 0, points, batchIds, features, catLabels, labels, 1.0, False, False)
-            
+            _, points, batchIds, features, labels, catLabels, _ = mTestDataSet.get_next_batch()
+
             lossRes, predictedLabelsRes, _ = sess.run([loss, predictedLabels, accuracyAccumOp], 
                     {inPts: points, inBatchIds: batchIds, inFeatures: features, inCatLabels: catLabels, 
                     inLabels: labels, isTraining: False, keepProbConv: 1.0, keepProbFull: 1.0})
@@ -355,12 +289,12 @@ if __name__ == '__main__':
             accumTestLoss = accumTestLoss + lossRes
             
             #Compute IoU
-            numParts = len(segClasses[cat[catId][0]])
+            numParts = len(segClasses[cat[catLabels[0][0]][0]])
             accumIoU = 0.0
             for j in range(numParts):
                 intersection = 0.0
                 union = 0.0
-                currLabel = segClasses[cat[catId][0]][j]
+                currLabel = segClasses[cat[catLabels[0][0]][0]][j]
                 for k in range(len(labels)):
                     if labels[k] == predictedLabelsRes[k] and labels[k] == currLabel:
                         intersection = intersection + 1.0
@@ -371,10 +305,12 @@ if __name__ == '__main__':
                 else:
                     accumIoU = accumIoU + 1.0
             accumIoU = accumIoU/float(numParts)
-            IoUxCat[catId].append(accumIoU)
+            IoUxCat[catLabels[0][0]].append(accumIoU)
             
-            if i%100 == 0:
-                visualize_progress(i, numTestModels)
+            if it%100 == 0:
+                visualize_progress(it, numTestModels)
+
+            it += 1
 
         #Compute mean IoU
         meanIoUxCat = 0.0
@@ -394,6 +330,3 @@ if __name__ == '__main__':
         print("Loss: %.6f | Test accuracy: %.4f | Test IoU %.4f" % (accumTestLoss, totalAccuracy*100.0, meanIoUxCat*100.0))
         with open(logFile, "a") as myfile:
             myfile.write("Loss: %.6f | Test accuracy: %.4f | Test IoU %.4f\n" % (accumTestLoss, totalAccuracy*100.0, meanIoUxCat*100.0))
-    
-        if epoch%10==0:
-            saver.save(sess, args.logFolder+"/model.ckpt")

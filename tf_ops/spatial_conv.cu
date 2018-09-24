@@ -102,6 +102,7 @@ __device__ void evaluateMLP(
  *  @param  pOutFeatures            Output parameter with the list of output features.
  */
 __global__ void evaluateMLPKernel(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumFeatures,
@@ -130,8 +131,8 @@ __global__ void evaluateMLPKernel(
     int numBlocksXNeigh = neuronsOut/BLOCK_MLP_SIZE;
     numBlocksXNeigh += (neuronsOut%BLOCK_MLP_SIZE != 0)?1:0;
 
-    unsigned long long int currentIndex = threadIdx.x + blockIdx.x*blockDim.x + 
-        blockIdx.y*gridDim.x*blockDim.x + blockIdx.z*gridDim.x*gridDim.y*blockDim.x;
+    unsigned long long int currentIndex = threadIdx.x + 
+        blockDim.x*(blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y);
     int currentNeighborIndex = currentIndex/(numBlocksXNeigh*BLOCK_MLP_SIZE);
     int offset = currentIndex%(numBlocksXNeigh*BLOCK_MLP_SIZE);
     offset = offset - offset%BLOCK_MLP_SIZE;
@@ -149,7 +150,7 @@ __global__ void evaluateMLPKernel(
             pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
         
         float currPointCoords[3] = {
             (pPoints[currentPointIndex*3] - pSamples[centralPointIndex*3])/scaledRadius, 
@@ -248,6 +249,7 @@ __device__ void evaluateMLPNoComb(
  *  @param  pOutFeatures            Output parameter with the list of output features.
  */
 __global__ void evaluateMLPNoCombinKernel(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumFeatures,
@@ -275,8 +277,8 @@ __global__ void evaluateMLPNoCombinKernel(
     int numBlocksXNeigh = neuronsOut/BLOCK_MLP_SIZE;
     numBlocksXNeigh += (neuronsOut%BLOCK_MLP_SIZE != 0)?1:0;
 
-    unsigned long long int currentIndex = threadIdx.x + blockIdx.x*blockDim.x + 
-        blockIdx.y*gridDim.x*blockDim.x + blockIdx.z*gridDim.x*gridDim.y*blockDim.x;
+    unsigned long long int currentIndex = threadIdx.x + 
+        blockDim.x*(blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y);
     int currentNeighborIndex = currentIndex/(numBlocksXNeigh*BLOCK_MLP_SIZE);
     int offset = currentIndex%(numBlocksXNeigh*BLOCK_MLP_SIZE);
     offset = offset - offset%BLOCK_MLP_SIZE;
@@ -294,7 +296,7 @@ __global__ void evaluateMLPNoCombinKernel(
             pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
         
         float currPointCoords[3] = {
             (pPoints[currentPointIndex*3] - pSamples[centralPointIndex*3])/scaledRadius, 
@@ -467,6 +469,7 @@ __device__ void computedconvj_d(
  *  @param  pPointsGrads            Output parameter with the list of gradients for the points.
  */
 __global__ void computedconvj_dKernel(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumFeatures,
@@ -502,8 +505,8 @@ __global__ void computedconvj_dKernel(
     int numBlocksXNeigh = neuronsOut/BLOCK_MLP_SIZE;
     numBlocksXNeigh += (neuronsOut%BLOCK_MLP_SIZE != 0)?1:0;
 
-    unsigned long long int currentIndex = threadIdx.x + blockIdx.x*blockDim.x + 
-        blockIdx.y*gridDim.x*blockDim.x + blockIdx.z*gridDim.x*gridDim.y*blockDim.x;
+    unsigned long long int currentIndex = threadIdx.x + 
+        blockDim.x*(blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y);
     int currentNeighborIndex = currentIndex/(numBlocksXNeigh*BLOCK_MLP_SIZE);
     int offset = currentIndex%(numBlocksXNeigh*BLOCK_MLP_SIZE);
     offset = offset - offset%BLOCK_MLP_SIZE;
@@ -522,7 +525,7 @@ __global__ void computedconvj_dKernel(
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
             
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
         float currPointCoords[3] = {
             (pPoints[currentPointIndex*3] - pSamples[centralPointIndex*3])/scaledRadius, 
             (pPoints[currentPointIndex*3+1] - pSamples[centralPointIndex*3+1])/scaledRadius, 
@@ -695,6 +698,7 @@ __device__ void computedconvj_dNoCombin(
  *  @param  pPointsGrads            Output parameter with the list of gradients for the points.
  */
 __global__ void computedconvj_dNoCombinKernel(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumFeatures,
@@ -729,8 +733,8 @@ __global__ void computedconvj_dNoCombinKernel(
     int numBlocksXNeigh = neuronsOut/BLOCK_MLP_SIZE;
     numBlocksXNeigh += (neuronsOut%BLOCK_MLP_SIZE != 0)?1:0;
 
-    unsigned long long int currentIndex = threadIdx.x + blockIdx.x*blockDim.x + 
-        blockIdx.y*gridDim.x*blockDim.x + blockIdx.z*gridDim.x*gridDim.y*blockDim.x;
+    unsigned long long int currentIndex = threadIdx.x + 
+        blockDim.x*(blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y);
     int currentNeighborIndex = currentIndex/(numBlocksXNeigh*BLOCK_MLP_SIZE);
     int offset = currentIndex%(numBlocksXNeigh*BLOCK_MLP_SIZE);
     offset = offset - offset%BLOCK_MLP_SIZE;
@@ -748,7 +752,7 @@ __global__ void computedconvj_dNoCombinKernel(
             pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
 
         float currPointCoords[3] = {
             (pPoints[currentPointIndex*3] - pSamples[centralPointIndex*3])/scaledRadius, 
@@ -780,6 +784,7 @@ __global__ void computedconvj_dNoCombinKernel(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 void spatialConvCPU(
+    bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
     int pNumOutFeatures,
@@ -822,7 +827,7 @@ void spatialConvCPU(
             (unsigned long long int)BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         evaluateMLPKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*2*sizeof(float)>>>(
-            pNumSamples, pNumNeighbors, pNumInFeatures, pNumOutFeatures, pRadius, pAABBMin, pAABBMax, 
+            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pNumOutFeatures, pRadius, pAABBMin, pAABBMax, 
             pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, pSamples, pInPoints, pBatchIds, 
             pInFeatures, pStartIndexs, pPackedNeighs, pPDFs, pOutFeatues);
 
@@ -838,7 +843,7 @@ void spatialConvCPU(
             (unsigned long long int)BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         evaluateMLPNoCombinKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*2*sizeof(float)>>>(
-            pNumSamples, pNumNeighbors, pNumInFeatures, pRadius, pAABBMin, pAABBMax, 
+            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pRadius, pAABBMin, pAABBMax, 
             pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, pSamples, pInPoints, pBatchIds, 
             pInFeatures, pStartIndexs, pPackedNeighs, pPDFs, pOutFeatues);
 
@@ -855,6 +860,7 @@ void spatialConvCPU(
 }
 
 void spatialConvGradsCPU(
+    bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
     int pNumOutFeatures,
@@ -908,8 +914,8 @@ void spatialConvGradsCPU(
         
         dim3 gridDimension = computeBlockGrid(pNumNeighbors*numBlocksPerPoint*BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
-        computedconvj_dKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*4*sizeof(float)>>>(pNumSamples,
-            pNumNeighbors, pNumInFeatures, 
+        computedconvj_dKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*4*sizeof(float)>>>(
+            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
             pNumOutFeatures, pRadius, pAABBMin, pAABBMax, pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, 
             pSamples, pInPoints, pBatchIds, pInFeatures, pInOutFeatueGrads, pStartIndexs, pPackedNeighs, pPDFs, pWeights1Grads, 
             pWeight2Grads, pWeightOutGrads, pBiases1Grads, pBiases2Grads, pBiasesOutGrads, pOutFeatureGrads);
@@ -930,7 +936,7 @@ void spatialConvGradsCPU(
         dim3 gridDimension = computeBlockGrid(pNumNeighbors*numBlocksPerPoint*BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         computedconvj_dNoCombinKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*4*sizeof(float)>>>(
-            pNumSamples, pNumNeighbors, pNumInFeatures, 
+            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
             pRadius, pAABBMin, pAABBMax, pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, 
             pSamples, pInPoints, pBatchIds, pInFeatures, pInOutFeatueGrads, pStartIndexs, pPackedNeighs, pPDFs, pWeights1Grads, 
             pWeight2Grads, pWeightOutGrads, pBiases1Grads, pBiases2Grads, pBiasesOutGrads, pOutFeatureGrads);

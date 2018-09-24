@@ -40,6 +40,7 @@ __constant__ int cellOffsets[27][3];
  *  @param  pOutNumNeigbors     Output parameter with the total number of neighbors.
  */
 __global__ void countNeighbors(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumCells,
     const float pRadius,
@@ -70,7 +71,7 @@ __global__ void countNeighbors(
             pAABBMaxPoint[currBatchId*3+1] - pAABBMinPoint[currBatchId*3+1]), 
             pAABBMaxPoint[currBatchId*3+2] - pAABBMinPoint[currBatchId*3+2]);
         float cellSize = maxAabbSize/(float)pNumCells;
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
         
         float centralCoords[3] = {pPoints[pointIndex], pPoints[pointIndex+1], pPoints[pointIndex+2]};
         int xCell = max(min((int)floor((centralCoords[0] - pAABBMinPoint[currBatchId*3])/cellSize), pNumCells -1), 0);
@@ -198,6 +199,7 @@ __global__ void computeOffsets(
  *  @param  pOutNeigbors            Output parameter with the list neighbors of each point.
  */
 __global__ void findNeighbors(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumCells,
     const int pNumNeighbors,
@@ -222,13 +224,13 @@ __global__ void findNeighbors(
         int globalOffsetIndex = offsetIndex/POINT_BLOCK_PACK_SIZE;
         int neighborIndex = pStartIndexs[currentIndex]+pStartIndexsOffset[offsetIndex]+pStartIndexsOffset2[globalOffsetIndex];
         pStartIndexs[currentIndex] = neighborIndex;
-        
+
         float maxAabbSize = max(max(
             pAABBMaxPoint[currBatchId*3] - pAABBMinPoint[currBatchId*3], 
             pAABBMaxPoint[currBatchId*3+1] - pAABBMinPoint[currBatchId*3+1]), 
             pAABBMaxPoint[currBatchId*3+2] - pAABBMinPoint[currBatchId*3+2]);
         float cellSize = maxAabbSize/(float)pNumCells;
-        float scaledRadius = pRadius*maxAabbSize;
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;
 
         float centralCoords[3] = {pPoints[pointIndex], pPoints[pointIndex+1], pPoints[pointIndex+2]};
         int xCell = max(min((int)floor((centralCoords[0] - pAABBMinPoint[currBatchId*3])/cellSize), pNumCells -1), 0);
@@ -266,6 +268,7 @@ __global__ void findNeighbors(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 unsigned int countNeighborsCPU(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumCells,
     const float pRadius,
@@ -298,7 +301,7 @@ unsigned int countNeighborsCPU(
     gpuErrchk(cudaMalloc(&totalNeighbors, sizeof(int)));
     cudaMemset(totalNeighbors, 0, sizeof(int));
 
-    countNeighbors<<<numBlocksPoints, POINT_BLOCK_SIZE>>>(pNumPoints, pNumCells, 
+    countNeighbors<<<numBlocksPoints, POINT_BLOCK_SIZE>>>(pScaleInv, pNumPoints, pNumCells, 
         pRadius, pAABBMin, pAABBMax, pInPts, pInBatchIds, pInPts2, pCellIndexs, pStartIndex, totalNeighbors);
 
     gpuErrchk(cudaPeekAtLastError());
@@ -315,7 +318,19 @@ unsigned int countNeighborsCPU(
         
 }  
 
+void computeAuxiliarBuffersSize(
+    const int pNumPoints,
+    int* PBufferSize1,
+    int* PBufferSize2)
+{
+    (*PBufferSize1) = pNumPoints/POINT_BLOCK_PACK_SIZE;
+    (*PBufferSize1) += (pNumPoints%POINT_BLOCK_PACK_SIZE != 0)?1:0;
+    (*PBufferSize2) = (*PBufferSize1)/POINT_BLOCK_PACK_SIZE;
+    (*PBufferSize2) += ((*PBufferSize1)%POINT_BLOCK_PACK_SIZE != 0)?1:0;
+}
+
 void packNeighborsCPU(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
     const int pNumCells,
@@ -326,6 +341,8 @@ void packNeighborsCPU(
     const int* pCellIndexs,
     const float* pAABBMin,
     const float* pAABBMax,
+    int* pAuxBuffOffsets,
+    int* pAuxBuffOffsets2,
     int* pStartIndexs,
     int* pPackedIndexs)
 {
@@ -336,29 +353,22 @@ void packNeighborsCPU(
     int numBlocksPointsPack2 = numBlocksPointsPack/POINT_BLOCK_PACK_SIZE;
     numBlocksPointsPack2 += (numBlocksPointsPack%POINT_BLOCK_PACK_SIZE != 0)?1:0;
 
-    int* neighborOffsets;
-    int* neighborOffsets2;
-    gpuErrchk(cudaMalloc(&neighborOffsets, sizeof(int)*numBlocksPointsPack));
-    gpuErrchk(cudaMalloc(&neighborOffsets2, sizeof(int)*numBlocksPointsPack2));
-    gpuErrchk(cudaMemset(neighborOffsets, 0, sizeof(int)*numBlocksPointsPack));
-    gpuErrchk(cudaMemset(neighborOffsets2, 0, sizeof(int)*numBlocksPointsPack2));
+    gpuErrchk(cudaMemset(pAuxBuffOffsets, 0, sizeof(int)*numBlocksPointsPack));
+    gpuErrchk(cudaMemset(pAuxBuffOffsets2, 0, sizeof(int)*numBlocksPointsPack2));
     
-    computeOffsets<<<numBlocksPointsPack, POINT_BLOCK_PACK_SIZE>>>(true, pNumPoints, numBlocksPointsPack, pStartIndexs, neighborOffsets);
+    computeOffsets<<<numBlocksPointsPack, POINT_BLOCK_PACK_SIZE>>>(true, pNumPoints, numBlocksPointsPack, pStartIndexs, pAuxBuffOffsets);
     
     gpuErrchk(cudaPeekAtLastError());
 
-    computeOffsets<<<numBlocksPointsPack2, POINT_BLOCK_PACK_SIZE>>>(false, numBlocksPointsPack, numBlocksPointsPack2, neighborOffsets, neighborOffsets2);
+    computeOffsets<<<numBlocksPointsPack2, POINT_BLOCK_PACK_SIZE>>>(false, numBlocksPointsPack, numBlocksPointsPack2, pAuxBuffOffsets, pAuxBuffOffsets2);
 
     gpuErrchk(cudaPeekAtLastError());
 
     int numBlocksPoints = pNumPoints/POINT_BLOCK_SIZE;
     numBlocksPoints += (pNumPoints%POINT_BLOCK_SIZE != 0)?1:0;
-    findNeighbors<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pNumCells, pNumNeighbors, pRadius, pAABBMin, pAABBMax, 
-        pInPts, pInBatchIds, pInPts2, pCellIndexs, neighborOffsets, neighborOffsets2, pStartIndexs, pPackedIndexs);
+    findNeighbors<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pScaleInv, pNumPoints, pNumCells, pNumNeighbors, pRadius, pAABBMin, pAABBMax, 
+        pInPts, pInBatchIds, pInPts2, pCellIndexs, pAuxBuffOffsets, pAuxBuffOffsets2, pStartIndexs, pPackedIndexs);
 
     gpuErrchk(cudaPeekAtLastError());
-
-    gpuErrchk(cudaFree(neighborOffsets));
-    gpuErrchk(cudaFree(neighborOffsets2));
 }
     

@@ -28,6 +28,7 @@ __constant__ int cellOffsetsPool[27][3];
 /**
  *  Method to select a set of points from a point cloud in which all of them are at 
  *  distance [pRadius*0.5, pRadius].
+ *  @param  scaleInv                Scale invariant.
  *  @param  pCurrBatch              Current batch processed.
  *  @param  pCurrentCell            Integer with the current cell of the block.
  *  @param  pNumPoints              Number of points.
@@ -48,6 +49,7 @@ __constant__ int cellOffsetsPool[27][3];
  *  @param  pOutNumSelectedPoints   Output parameter with the number of selected points.
  */
 __global__ void selectSamples(
+    const bool scaleInv, 
     const int pCurrBatch,
     const int pCurrentCell,
     const int pNumPoints,
@@ -75,7 +77,7 @@ __global__ void selectSamples(
             pAABBMaxPoint[pCurrBatch*3] - pAABBMinPoint[pCurrBatch*3], 
             pAABBMaxPoint[pCurrBatch*3 + 1] - pAABBMinPoint[pCurrBatch*3 + 1]), 
             pAABBMaxPoint[pCurrBatch*3 + 2] - pAABBMinPoint[pCurrBatch*3 + 2]);
-        float radius = pRadius*maxAabbSize;
+        float radius = (scaleInv)?pRadius*maxAabbSize:pRadius;
 
         int cellIndex = pCurrBatch*pNumCells*pNumCells*pNumCells + xCell*pNumCells*pNumCells + yCell*pNumCells + zCell;
         int initPoint = pCellIndexs[cellIndex*2];
@@ -171,6 +173,7 @@ __global__ void selectFeatureSamplesGrad(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 int samplePointCloud(
+    const bool scaleInv, 
     const float pRadius,
     const int pNumPoints,
     const int pBatchSize,
@@ -207,7 +210,7 @@ int samplePointCloud(
     for(int b = 0; b < pBatchSize; ++b){
         for(int i = 0; i < 27; ++i){
             selectSamples<<<dim3(numBlocks,numBlocks,numBlocks), dim3(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)>>>
-                (b, i, pNumPoints, pBatchSize, pNumCells, pRadius, pAABBMin, 
+                (scaleInv, b, i, pNumPoints, pBatchSize, pNumCells, pRadius, pAABBMin, 
                 pAABBMax, pPoints, pBatchIds, pCellIndexs, pAuxBoolBuffer, pSelectedPts, 
                 pSelectedBatchIds, pSelectedIndexs, numSelectedPoints);
 

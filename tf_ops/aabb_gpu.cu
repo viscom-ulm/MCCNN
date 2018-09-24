@@ -46,6 +46,7 @@ __device__ static float atomicMax(float* address, float val)
 
 /**
  *  Method to compute the bounding box of a point cloud.
+ *  @param  pScaleInv       Scale invariance.
  *  @param  pNumPoints      Number of points.
  *  @param  pBatchSize      Size of the batch.
  *  @param  pPoints         List of points.
@@ -54,6 +55,7 @@ __device__ static float atomicMax(float* address, float val)
  *  @param  pAABBMax        Output parameter with the maximum point of the bounding box.
  */
 __global__ void comp_AABB(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pBatchSize,
     const float* __restrict__ pPoints, 
@@ -92,12 +94,24 @@ __global__ void comp_AABB(
         __syncthreads();
 
         if(threadIdx.x < pBatchSize){
-            atomicMin(&pAABBMin[threadIdx.x*3], tmpSharedMemPtr[threadIdx.x*3]);
-            atomicMin(&pAABBMin[threadIdx.x*3 + 1], tmpSharedMemPtr[threadIdx.x*3 + 1]);
-            atomicMin(&pAABBMin[threadIdx.x*3 + 2], tmpSharedMemPtr[threadIdx.x*3 + 2]);
-            atomicMax(&pAABBMax[threadIdx.x*3], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3]);
-            atomicMax(&pAABBMax[threadIdx.x*3 + 1], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 1]);
-            atomicMax(&pAABBMax[threadIdx.x*3 + 2], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 2]);
+            if(pScaleInv){
+                atomicMin(&pAABBMin[threadIdx.x*3], tmpSharedMemPtr[threadIdx.x*3]);
+                atomicMin(&pAABBMin[threadIdx.x*3 + 1], tmpSharedMemPtr[threadIdx.x*3 + 1]);
+                atomicMin(&pAABBMin[threadIdx.x*3 + 2], tmpSharedMemPtr[threadIdx.x*3 + 2]);
+                atomicMax(&pAABBMax[threadIdx.x*3], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3]);
+                atomicMax(&pAABBMax[threadIdx.x*3 + 1], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 1]);
+                atomicMax(&pAABBMax[threadIdx.x*3 + 2], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 2]);
+            }else{
+                for(int i = 0; i < pBatchSize; ++i)
+                {
+                    atomicMin(&pAABBMin[i*3], tmpSharedMemPtr[threadIdx.x*3]);
+                    atomicMin(&pAABBMin[i*3 + 1], tmpSharedMemPtr[threadIdx.x*3 + 1]);
+                    atomicMin(&pAABBMin[i*3 + 2], tmpSharedMemPtr[threadIdx.x*3 + 2]);
+                    atomicMax(&pAABBMax[i*3], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3]);
+                    atomicMax(&pAABBMax[i*3 + 1], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 1]);
+                    atomicMax(&pAABBMax[i*3 + 2], tmpSharedMemPtr[pBatchSize*3 + threadIdx.x*3 + 2]);
+                }
+            }
         }
     }
 }
@@ -105,6 +119,7 @@ __global__ void comp_AABB(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 void computeAABB(
+    const bool pScaleInv,
     const int pNumPoints,
     const int pBatchSize,
     const float* pPoints,
@@ -122,5 +137,5 @@ void computeAABB(
     gpuErrchk(cudaMemcpy(pAABBMax, &minFlt[0], pBatchSize*3*sizeof(float),  cudaMemcpyHostToDevice));
     int numBlocksPoints = pNumPoints/POINT_BLOCK_SIZE;
     numBlocksPoints += (pNumPoints%POINT_BLOCK_SIZE != 0)?1:0;
-    comp_AABB<<<numBlocksPoints, POINT_BLOCK_SIZE, pBatchSize*6*sizeof(float)>>>(pNumPoints, pBatchSize, pPoints, pBatchIds, pAABBMin, pAABBMax);
+    comp_AABB<<<numBlocksPoints, POINT_BLOCK_SIZE, pBatchSize*6*sizeof(float)>>>(pScaleInv, pNumPoints, pBatchSize, pPoints, pBatchIds, pAABBMin, pAABBMax);
 }

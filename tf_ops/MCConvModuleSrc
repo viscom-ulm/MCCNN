@@ -1,0 +1,106 @@
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    \file MCConvModule.py
+
+    \brief Python definition of the tensor operations.
+
+    \copyright Copyright (c) 2018 Visual Computing group of Ulm University,  
+                Germany. See the LICENSE file at the top-level directory of 
+                this distribution.
+
+    \author pedro hermosilla (pedro-1.hermosilla-casajus@uni-ulm.de)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+import tensorflow as tf
+import sys
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+MCConv_module=tf.load_op_library(os.path.join(BASE_DIR, 'MCConv.so'))
+
+def compute_aabb(inPts, inBatchIds, batchSize, scaleInv = True):
+    return MCConv_module.compute_aabb(inPts, inBatchIds, batchSize, scaleInv)
+tf.NoGradient('ComputeAabb')
+
+def sort_points_step1(inPts, inBatchIds, aabbMin, aabbMax, batchSize, cellSize, scaleInv):
+    return MCConv_module.sort_points_step1(inPts, inBatchIds, aabbMin, aabbMax, batchSize, cellSize, scaleInv)
+tf.NoGradient('SortPointsStep1')
+
+def sort_points_step2(inPts, inBatchIds, inFeatures, keys, indexs, aabbMin, aabbMax, batchSize, cellSize, scaleInv):
+    return MCConv_module.sort_points_step2(inPts, inBatchIds, inFeatures, keys, indexs, aabbMin, aabbMax, batchSize, cellSize, scaleInv)
+@tf.RegisterGradient("SortPointsStep2")
+def _sort_points_step2_grad(op, *grads):
+    inPtsGrad, inFeatureGrad = MCConv_module.sort_points_step2_grad(op.inputs[4], grads[0], grads[2])
+    return [inPtsGrad, None, inFeatureGrad, None, None, None, None]
+
+def sort_features(inFeatures, indexs):
+    return MCConv_module.sort_features_back_grad(indexs, inFeatures)
+@tf.RegisterGradient("SortFeaturesBackGrad")
+def _sort_features_grad(op, grads):
+    return  [None, MCConv_module.sort_features_back(grads, op.inputs[0])]
+
+def sort_features_back(inFeatures, indexs):
+    return MCConv_module.sort_features_back(inFeatures, indexs)
+@tf.RegisterGradient("SortFeaturesBack")
+def _sort_features_back_grad(op, grads):
+    return  [MCConv_module.sort_features_back_grad(op.inputs[1], grads), None]
+    
+def transform_indexs(inIndexs, inNewPositions):
+    return MCConv_module.transform_indexs(inIndexs, inNewPositions)
+tf.NoGradient('TransformIndexs')
+
+def find_neighbors(inPts, inBatchIds, inPts2, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv):
+    return MCConv_module.find_neighbors(inPts, inBatchIds, inPts2, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv)
+tf.NoGradient('FindNeighbors')
+
+def compute_pdf(inPts, inBatchIds, aabbMin, aabbMax, startIndexs, neighbors, window, radius, batchSize, scaleInv):
+    return MCConv_module.compute_pdf(inPts, inBatchIds, startIndexs, neighbors, aabbMin, aabbMax, window, batchSize, radius, scaleInv)
+tf.NoGradient('ComputePDF')
+
+def expand_neighs_pts(inPts, inBatchIds, inPts2, neighbors, aabbMin, aabbMax, radius, batchSize):
+    return MCConv_module.expand_neighs_pts(inPts, inBatchIds, inPts2, neighbors, aabbMin, aabbMax, radius, batchSize)
+tf.NoGradient('ExpandNeighsPts')
+
+def expand_neighs_features(inFeatures, neighbors):
+    return MCConv_module.expand_neighs_features(inFeatures, neighbors)
+@tf.RegisterGradient("ExpandNeighsFeatures")
+def _expand_neighs_grad(op, *grads):
+    featureGrads = MCConv_module.expand_neighs_features_grad(op.inputs[0], grads[0], op.inputs[1])
+    return [featureGrads, None]
+
+def contract_neighs(inFeatures, startIndexs, neighbors):
+    return MCConv_module.contract_neighs(inFeatures, startIndexs, neighbors)
+@tf.RegisterGradient("ContractNeighs")
+def _contract_neighs_grad(op, *grads):
+    featureGrads = MCConv_module.contract_neighs_grad(grads[0], op.inputs[1], op.inputs[2])
+    return [featureGrads, None, None]
+
+def batch_reduce_sum(inFeatures, inBatchIds, batchSize):
+    return MCConv_module.batch_reduce_sum(inFeatures, inBatchIds, batchSize)
+@tf.RegisterGradient("BatchReduceSum")
+def _batch_reduce_sum_grad(op, *grads):
+    featureGrads = MCConv_module.batch_reduce_sum_grad(grads[0], op.inputs[1])
+    return [featureGrads, None]
+
+def poisson_sampling(inPts, inBatchIds, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv):
+    return MCConv_module.poisson_sampling(inPts, inBatchIds, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv)
+tf.NoGradient('PoissonSampling')
+
+def get_sampled_features(inSampledIndexs, pInFeatures):
+    return MCConv_module.get_sampled_features(inSampledIndexs, pInFeatures)
+@tf.RegisterGradient("GetSampledFeatures")
+def _get_sampled_features_grad(op, *grads):
+    featureGrads = MCConv_module.get_sampled_features_grad(op.inputs[0], op.inputs[1], grads[0])
+    return [None, featureGrads]
+
+def spatial_conv(inPts, inFeatures, inBatchIds, inPDFs, inSamplePts, neighStartIndexs, packedNeighs, aabbMin, aabbMax,
+    weights1, weights2, weightsOut, biases1, biases2, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv):
+    return MCConv_module.spatial_conv(inPts, inFeatures, inBatchIds, inPDFs, inSamplePts, neighStartIndexs, packedNeighs, aabbMin, aabbMax,
+        weights1, biases1, weights2, biases2, weightsOut, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv)
+@tf.RegisterGradient("SpatialConv")
+def _contract_neighs_grad(op, *grads):
+    featureGrads, weights1Grads, biases1Grads, weights2Grads, biases2Grads, weightsOutGrads, biasesOutGrads = \
+        MCConv_module.spatial_conv_grad(op.inputs[0], op.inputs[1], op.inputs[2], op.inputs[3], op.inputs[4], op.inputs[5],
+        op.inputs[6], op.inputs[7], op.inputs[8], op.inputs[9], op.inputs[10], op.inputs[11], op.inputs[12], op.inputs[13],
+        op.inputs[14], grads[0], op.get_attr("num_out_features"), op.get_attr("combin"), op.get_attr("batch_size"), 
+        op.get_attr("radius"), op.get_attr("scale_inv"))
+    return [None, featureGrads, None, None, None, None, None, None, None, weights1Grads, biases1Grads, weights2Grads, biases2Grads, weightsOutGrads, biasesOutGrads]

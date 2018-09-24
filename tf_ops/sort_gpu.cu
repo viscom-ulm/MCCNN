@@ -17,7 +17,7 @@
 #include "cuda_kernel_utils.h"
 
 #define POINT_BLOCK_SIZE 128
-#define OFFSET_BLOCK_SIZE 256
+#define OFFSET_BLOCK_SIZE 512
 
 ////////////////////////////////////////////////////////////////////////////////// GPU
 
@@ -362,7 +362,76 @@ __global__ void transform_indexs(
     }
 }
 
+
+/**
+ *  Method to determine the cell size.
+ *  @param  pBatchSize              Number of elements per batch.
+ *  @param  pCellSize               Desired cell size.
+ *  @param  pAABBMin                Minimum points of the bounding boxes.
+ *  @param  pAABBMax                Maximum points of the bounding boxes.
+ *  @param  pNumCells               Output parameter with the number of cells.
+ */
+__global__ void determine_cell_size(
+    const int pBatchSize,
+    const float pCellSize,
+    const float* __restrict__ pAABBMin,
+    const float* __restrict__ pAABBMax,
+    int* __restrict__ pNumCells) 
+{
+    int currBatchId = threadIdx.x;
+    if(currBatchId == 0){
+        float maxAabbSize = max(max(pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
+            pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
+            pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
+        int numCells = (int)ceil(maxAabbSize/pCellSize);
+        numCells = (numCells == 0)?1:numCells;
+        //printf("Num cells: %d\n", numCells);
+        *pNumCells = numCells;
+    }
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////////////// CPU
+
+int determineNumCells(
+    const bool pScaleInv,
+    const int pBatchSize,
+    const float pCellSize,
+    const float* pAABBMin, 
+    const float* pAABBMax)
+{
+    if(pScaleInv){
+        int numCellsCPU = (int)ceil(1.0f/pCellSize);
+        numCellsCPU = (numCellsCPU == 0)?1:numCellsCPU;
+        return numCellsCPU;
+    }
+
+    int* numCells;
+    cudaMalloc(&numCells, sizeof(int));
+    cudaMemset(numCells, 0x3F, sizeof(int));
+
+    determine_cell_size<<<1, pBatchSize>>>(pBatchSize, pCellSize, pAABBMin, pAABBMax, numCells);
+
+    int numCellsCPU = 0;
+    cudaMemcpy(&numCellsCPU, numCells, sizeof(int), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaFree(numCells));
+    return numCellsCPU;
+}
+
+void computeAuxiliarBuffersSize(
+    const int pBatchSize, 
+    const int pNumCells,
+    int* PBufferSize1,
+    int* PBufferSize2,
+    int* PBufferSize3)
+{
+    (*PBufferSize1) = pBatchSize*pNumCells*pNumCells*pNumCells;
+    (*PBufferSize2) = (*PBufferSize1)/OFFSET_BLOCK_SIZE;
+    (*PBufferSize2) += (((*PBufferSize1)%OFFSET_BLOCK_SIZE) != 0)?1:0;
+    (*PBufferSize3) = (*PBufferSize2)/OFFSET_BLOCK_SIZE;
+    (*PBufferSize3) += (((*PBufferSize2)%OFFSET_BLOCK_SIZE) != 0)?1:0;
+}
 
 void sortPointsStep1GPUKernel(
     const int pNumPoints, 
@@ -372,6 +441,9 @@ void sortPointsStep1GPUKernel(
     const float* pAABBMax, 
     const float* pPoints,
     const int* pBatchIds,
+    int* pAuxBuffCounters,
+    int* pAuxBuffOffsets,
+    int* pAuxBuffOffsets2,
     int* pKeys,
     int* pNewIndexs)
 {
@@ -379,32 +451,23 @@ void sortPointsStep1GPUKernel(
     numBlocksPoints += (pNumPoints%POINT_BLOCK_SIZE != 0)?1:0;
     int totalNumCells = pBatchSize*pNumCells*pNumCells*pNumCells;
     
-    int* counters;
-    cudaMalloc(&counters, totalNumCells*sizeof(int));//TODO - Use tmp tensor of tensorflow
-    cudaMemset(counters, 0, totalNumCells*sizeof(int));
+    cudaMemset(pAuxBuffCounters, 0, totalNumCells*sizeof(int));
 
     int numOffsets = totalNumCells/OFFSET_BLOCK_SIZE;
     numOffsets += ((totalNumCells%OFFSET_BLOCK_SIZE) != 0)?1:0;
     int numOffsets2 = numOffsets/OFFSET_BLOCK_SIZE;
     numOffsets2 += ((numOffsets%OFFSET_BLOCK_SIZE) != 0)?1:0;
-    int* offsets;
-    int* offsets2;
-    cudaMalloc(&offsets, numOffsets*sizeof(int));//TODO - Use tmp tensor of tensorflow
-    cudaMalloc(&offsets2, numOffsets2*sizeof(int));//TODO - Use tmp tensor of tensorflow
-    cudaMemset(offsets, 0, numOffsets*sizeof(int));
-    cudaMemset(offsets2, 0, numOffsets2*sizeof(int));
+
+    cudaMemset(pAuxBuffOffsets, 0, numOffsets*sizeof(int));
+    cudaMemset(pAuxBuffOffsets2, 0, numOffsets2*sizeof(int));
 
     calc_key<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(
         pNumPoints, pBatchSize, pNumCells, pAABBMin, pAABBMax, pPoints, pBatchIds, pKeys);
-    update_counters<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pKeys, counters);
-    propagate_offsets<<<numOffsets, OFFSET_BLOCK_SIZE>>>(true, totalNumCells, numOffsets, counters, offsets);
-    propagate_offsets<<<numOffsets2, OFFSET_BLOCK_SIZE>>>(false, numOffsets, numOffsets2, offsets, offsets2);
-    determine_new_index<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pKeys, counters, offsets, 
-        offsets2, pNewIndexs);
-
-    cudaFree(counters);
-    cudaFree(offsets);
-    cudaFree(offsets2);
+    update_counters<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pKeys, pAuxBuffCounters);
+    propagate_offsets<<<numOffsets, OFFSET_BLOCK_SIZE>>>(true, totalNumCells, numOffsets, pAuxBuffCounters, pAuxBuffOffsets);
+    propagate_offsets<<<numOffsets2, OFFSET_BLOCK_SIZE>>>(false, numOffsets, numOffsets2, pAuxBuffOffsets, pAuxBuffOffsets2);
+    determine_new_index<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pKeys, pAuxBuffCounters, pAuxBuffOffsets, 
+        pAuxBuffOffsets2, pNewIndexs);
 }
 
 void sortPointsStep2GPUKernel(
@@ -417,6 +480,7 @@ void sortPointsStep2GPUKernel(
     const float* pFeatures,
     const int* pKeys,
     const int* pNewIndexs,
+    int* pAuxBuffer,
     float* pOutPoints,
     int* pOutBatchIds,
     float* pOutFeatures,
@@ -425,16 +489,11 @@ void sortPointsStep2GPUKernel(
     int numBlocksPoints = pNumPoints/POINT_BLOCK_SIZE;
     numBlocksPoints += (pNumPoints%POINT_BLOCK_SIZE != 0)?1:0;
 
-    int* orderedKeys;
-    cudaMalloc(&orderedKeys, pNumPoints*sizeof(int));//TODO - Use tmp tensor of tensorflow
-
     cudaMemset(pOutCellIndexs, 0, pBatchSize*pNumCells*pNumCells*pNumCells*sizeof(int)*2);
 
     move_points<<<numBlocksPoints,POINT_BLOCK_SIZE>>>
-        (pNumPoints, pBatchSize, pNumFeatures, pPoints, pBatchIds, pFeatures, pKeys, pNewIndexs, pOutPoints, pOutBatchIds, pOutFeatures, orderedKeys);
-    save_indexs<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, orderedKeys, pOutCellIndexs);
-
-    cudaFree(orderedKeys);
+        (pNumPoints, pBatchSize, pNumFeatures, pPoints, pBatchIds, pFeatures, pKeys, pNewIndexs, pOutPoints, pOutBatchIds, pOutFeatures, pAuxBuffer);
+    save_indexs<<<numBlocksPoints,POINT_BLOCK_SIZE>>>(pNumPoints, pAuxBuffer, pOutCellIndexs);
 }
 
 void sortPointsStep2GradGPUKernel(

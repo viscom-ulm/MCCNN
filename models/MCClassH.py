@@ -19,222 +19,175 @@ import tensorflow as tf
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'tf_ops'))
-from MCConvModule import compute_aabb
-from MCNetworkUtils import fully_connected, batch_norm_RELU_drop_out, distribute_grid, compute_convolution, \
-    prepare_conv, reduce_channels, compute_hierarchy
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
+from MCConvBuilder import PointHierarchy, ConvolutionBuilder
+from MCNetworkUtils import MLP_2_hidden, batch_norm_RELU_drop_out, conv_1x1
 
 def create_network(points, batchIds, features, numInputFeatures, batchSize, k, numOutCat, isTraining, 
     keepProbConv, keepProbFull, useConvDropOut = False, useDropOutFull = True):
 
-    #Bounging box computation
-    with tf.name_scope('aabbLayer'):
-        aabbMin, aabbMax = compute_aabb(points, batchIds, batchSize)
+    ############################################ Compute point hierarchy
+    mPointHierarchy = PointHierarchy(points, features, batchIds, [0.1, 0.4, math.sqrt(3.0)+0.1], "MCClassH_PH", batchSize)
 
-    #### Compute hierarchy
-    samplingRadius = [0.1, 0.4, math.sqrt(3.0)+0.1]
-    sampledPts, sampledBatchIds, sampledFeatures, _ = compute_hierarchy(
-        "Hierarchy", points, batchIds, features, samplingRadius, aabbMin, aabbMax, batchSize)
-
-    centerPts = (aabbMax + aabbMin)*0.5
-    sampledPts[3] = tf.slice(centerPts, [0, 0], tf.shape(sampledPts[3]))
+    ############################################ Convolutions
+    mConvBuilder = ConvolutionBuilder(KDEWindow=0.25)
 
     ############################################ LOGITS 1
 
-    ############################################ First level convolutions
+    ############################################ First level 
 
-    #### Convolutions
-    currPts = points
-    currBatchIds = batchIds
+    # Convolution
+    convFeatures1 = mConvBuilder.create_convolution(
+        convName="Conv_1", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=0, 
+        inFeatures=features, 
+        inNumFeatures=numInputFeatures, 
+        outNumFeatures=k,
+        convRadius= 0.1,
+        multiFeatureConv=True)
 
-    currRadius = 0.1
-    currSampledPts = sampledPts[0]
-    currSampledBatchIds = sampledBatchIds[0]
-    currSampledFeatures = sampledFeatures[0]
-
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_1', currSampledPts, 
-        currSampledBatchIds, currSampledFeatures, aabbMin, aabbMax, batchSize, currRadius)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_conv_1', currPts, currBatchIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, currRadius, 0.25)
-    currFeatures = compute_convolution("Conv_1", sortPts, sortFeatures, sortBatchs, pdfs, currPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, currRadius, numInputFeatures, k, isTraining)
-
+    # Pooling
+    convFeatures1 = batch_norm_RELU_drop_out("Reduce_Pool_1_In_BN", convFeatures1, isTraining, useConvDropOut, keepProbConv)
+    convFeatures1 = conv_1x1("Reduce_Pool_1", convFeatures1, k, k*2)
+    convFeatures1 = batch_norm_RELU_drop_out("Reduce_Pool_1_Out_BN", convFeatures1, isTraining, useConvDropOut, keepProbConv)
+    poolFeatures1 = mConvBuilder.create_convolution(
+        convName="Pool_1", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=0, 
+        outPointLevel=1, 
+        inFeatures=convFeatures1,
+        inNumFeatures=k*2, 
+        convRadius=0.2,
+        KDEWindow= 0.2)
 
     ############################################ Second level convolutions
 
-    #### Pooling
-    newCurrPts = sampledPts[1]
-    newCurrBatchsIds = sampledBatchIds[1]
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_pool_1', currPts, 
-        currBatchIds, currFeatures, aabbMin, aabbMax, batchSize, 0.2)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_pool_1', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, 0.2, 0.20)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_1_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("Pool_1", sortFeatures, k, k*2)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_1_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    newCurrFeatures = compute_convolution("Pool_1", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, 0.2, k*2, k*2, isTraining, fullConv = False)
+    #### Convolution
+    bnPoolFeatures1 = batch_norm_RELU_drop_out("Reduce_Conv_2_In_BN", poolFeatures1, isTraining, useConvDropOut, keepProbConv)
+    bnPoolFeatures1 = conv_1x1("Reduce_Conv_2", bnPoolFeatures1, k*2, k*2)
+    bnPoolFeatures1 = batch_norm_RELU_drop_out("Reduce_Conv_2_Out_BN", bnPoolFeatures1, isTraining, useConvDropOut, keepProbConv)
+    convFeatures2 = mConvBuilder.create_convolution(
+        convName="Conv_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=1, 
+        inFeatures=bnPoolFeatures1,
+        inNumFeatures=k*2, 
+        convRadius=0.4)
+    convFeatures2 = tf.concat([poolFeatures1, convFeatures2], 1)
 
-    #### Convolutions
-    currRadius = 0.4
-    currSampledPts = sampledPts[1]
-    currSampledBatchIds = sampledBatchIds[1]
-    currSampledFeatures = newCurrFeatures
-
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_2', currSampledPts, 
-        currSampledBatchIds, currSampledFeatures, aabbMin, aabbMax, batchSize, currRadius)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_conv_2', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, currRadius, 0.25)
-    sortFeatures = batch_norm_RELU_drop_out("Conv_2_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("Conv_2_Reduce", sortFeatures, k*2, k*2)
-    sortFeatures = batch_norm_RELU_drop_out("Conv_2_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    currFeatures = compute_convolution("Conv_2", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, currRadius, k*2, k*2, isTraining, fullConv = False)
+    # Pooling
+    convFeatures2 = batch_norm_RELU_drop_out("Reduce_Pool_2_In_BN", convFeatures2, isTraining, useConvDropOut, keepProbConv)
+    convFeatures2 = conv_1x1("Reduce_Pool_2", convFeatures2, k*4, k*8)
+    convFeatures2 = batch_norm_RELU_drop_out("Reduce_Pool_2_Out_BN", convFeatures2, isTraining, useConvDropOut, keepProbConv)
+    poolFeatures2 = mConvBuilder.create_convolution(
+        convName="Pool_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=1, 
+        outPointLevel=2, 
+        inFeatures=convFeatures2,
+        inNumFeatures=k*8, 
+        convRadius=0.8,
+        KDEWindow= 0.2)
 
     
-    currPts = newCurrPts
-    currBatchIds = newCurrBatchsIds
-    currFeatures = tf.concat([currFeatures, newCurrFeatures], 1)
-
     ############################################ Third level convolutions
 
-    #### Pooling
-    newCurrPts = sampledPts[2]
-    newCurrBatchsIds = sampledBatchIds[2]
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_pool_2', currPts, 
-        currBatchIds, currFeatures, aabbMin, aabbMax, batchSize, 0.8)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_pool_2', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, 0.8, 0.20)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_2_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("Pool_2", sortFeatures, k*4, k*8)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_2_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    newCurrFeatures = compute_convolution("Pool_2", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, 0.8, k*8, k*8, isTraining, fullConv = False)
+    # Convolution
+    bnPoolFeatures2 = batch_norm_RELU_drop_out("Reduce_Conv_3_In_BN", poolFeatures2, isTraining, useConvDropOut, keepProbConv)
+    bnPoolFeatures2 = conv_1x1("Reduce_Conv_3", bnPoolFeatures2, k*8, k*8)
+    bnPoolFeatures2 = batch_norm_RELU_drop_out("Reduce_Conv_3_Out_BN", bnPoolFeatures2, isTraining, useConvDropOut, keepProbConv)
+    convFeatures3 = mConvBuilder.create_convolution(
+        convName="Conv_3", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=2, 
+        inFeatures=bnPoolFeatures2,
+        inNumFeatures=k*8, 
+        convRadius=1.2)
+    convFeatures3 = tf.concat([poolFeatures2, convFeatures3], 1)
 
-    #### Compute hierarchy
-    newSampledFeatures = newCurrFeatures
-
-    #### Convolutions
-    currRadius = 1.2
-    currSampledPts = sampledPts[2]
-    currSampledBatchIds = sampledBatchIds[2]
-    currSampledFeatures = newSampledFeatures
-
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_3', currSampledPts, 
-        currSampledBatchIds, currSampledFeatures, aabbMin, aabbMax, batchSize, currRadius)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_conv_3', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, currRadius, 0.25)
-    sortFeatures = batch_norm_RELU_drop_out("Conv_3_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("Conv_3_Reduce", sortFeatures, k*8, k*8)
-    sortFeatures = batch_norm_RELU_drop_out("Conv_3_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    currFeatures = compute_convolution("Conv_3", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, currRadius, k*8, k*8, isTraining, fullConv = False)
-            
-    currPts = newCurrPts
-    currBatchIds = newCurrBatchsIds
-    currFeatures = tf.concat([currFeatures, newCurrFeatures], 1)
-
-    ############################################ Fourth level convolutions
-
-    #### Pooling
-    newCurrPts = sampledPts[3]
-    newCurrBatchsIds = sampledBatchIds[3]
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('grid_pool_3', currPts, 
-        currBatchIds, currFeatures, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1)
-    pdfs, startIndexs, packedNeighs = prepare_conv('pre_pool_3', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1, 0.20)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_3_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("Pool_3", sortFeatures, k*16, k*32)
-    sortFeatures = batch_norm_RELU_drop_out("Pool_3_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    newCurrFeatures = compute_convolution("Pool_3", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1, k*32, k*32, isTraining, fullConv = False)
+    # Pooling
+    convFeatures3 = batch_norm_RELU_drop_out("Reduce_Pool_3_In_BN", convFeatures3, isTraining, useConvDropOut, keepProbConv)
+    convFeatures3 = conv_1x1("Reduce_Pool_3", convFeatures3, k*16, k*32)
+    convFeatures3 = batch_norm_RELU_drop_out("Reduce_Pool_3_Out_BN", convFeatures3, isTraining, useConvDropOut, keepProbConv)
+    poolFeatures3 = mConvBuilder.create_convolution(
+        convName="Pool_3", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=2, 
+        outPointLevel=3, 
+        inFeatures=convFeatures3,
+        inNumFeatures=k*32, 
+        convRadius=math.sqrt(3.0)+0.1,
+        KDEWindow= 0.2)
 
     
     #Fully connected MLP - Global features.
-    finalInput = batch_norm_RELU_drop_out("BNRELUDROP_final", newCurrFeatures, isTraining, useConvDropOut, keepProbConv)
-    finalLogits1 = fully_connected(finalInput, k*32, k*16, k*8, numOutCat, "Final_Logits", keepProbFull, isTraining, useDropOutFull)
+    finalInput = batch_norm_RELU_drop_out("BNRELUDROP_final", poolFeatures3, isTraining, useConvDropOut, keepProbConv)
+    finalLogits1 = MLP_2_hidden(finalInput, k*32, k*16, k*8, numOutCat, "Final_Logits", keepProbFull, isTraining, useDropOutFull)
 
 
     ############################################ LOGITS 2
 
     ############################################ Second level convolutions
 
-    #### Pooling
-    newCurrPts = sampledPts[1]
-    newCurrBatchsIds = sampledBatchIds[1]
-    newCurrFeatures = sampledFeatures[1]
+    #### Convolution
+    convFeatures22 = mConvBuilder.create_convolution(
+        convName="Conv_2_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=1, 
+        inFeatures=mPointHierarchy.features_[1], 
+        inNumFeatures=numInputFeatures, 
+        outNumFeatures=k*2,
+        convRadius= 0.4,
+        multiFeatureConv=True)
 
-    #### Convolutions
-    currRadius = 0.4
-    currSampledPts = sampledPts[1]
-    currSampledBatchIds = sampledBatchIds[1]
-    currSampledFeatures = newCurrFeatures
+    # Pooling
+    convFeatures22 = batch_norm_RELU_drop_out("Reduce_Pool_2_2_In_BN", convFeatures22, isTraining, useConvDropOut, keepProbConv)
+    convFeatures22 = conv_1x1("Reduce_Pool_2_2", convFeatures22, k*2, k*8)
+    convFeatures22 = batch_norm_RELU_drop_out("Reduce_Pool_2_2_Out_BN", convFeatures22, isTraining, useConvDropOut, keepProbConv)
+    poolFeatures22 = mConvBuilder.create_convolution(
+        convName="Pool_2_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=1, 
+        outPointLevel=2, 
+        inFeatures=convFeatures22,
+        inNumFeatures=k*8, 
+        convRadius=0.8,
+        KDEWindow= 0.2)
 
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('2grid_2', currSampledPts, 
-        currSampledBatchIds, currSampledFeatures, aabbMin, aabbMax, batchSize, currRadius)
-    pdfs, startIndexs, packedNeighs = prepare_conv('2pre_conv_2', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, currRadius, 0.25)
-    currFeatures = compute_convolution("2Conv_2", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, currRadius, 1, k*2, isTraining)
-
-    currPts = newCurrPts
-    currBatchIds = newCurrBatchsIds
-
+    
     ############################################ Third level convolutions
 
-    #### Pooling
-    newCurrPts = sampledPts[2]
-    newCurrBatchsIds = sampledBatchIds[2]
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('2grid_pool_2', currPts, 
-        currBatchIds, currFeatures, aabbMin, aabbMax, batchSize, 0.8)
-    pdfs, startIndexs, packedNeighs = prepare_conv('2pre_pool_2', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, 0.8, 0.20)
-    sortFeatures = batch_norm_RELU_drop_out("2Pool_2_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("2Pool_2", sortFeatures, k*2, k*8)
-    sortFeatures = batch_norm_RELU_drop_out("2Pool_2_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    newCurrFeatures = compute_convolution("2Pool_2", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, 0.8, k*8, k*8, isTraining, fullConv = False)
+    # Convolution
+    bnPoolFeatures22 = batch_norm_RELU_drop_out("Reduce_Conv_3_2_In_BN", poolFeatures22, isTraining, useConvDropOut, keepProbConv)
+    bnPoolFeatures22 = conv_1x1("Reduce_Conv_3_2", bnPoolFeatures22, k*8, k*8)
+    bnPoolFeatures22 = batch_norm_RELU_drop_out("Reduce_Conv_3_2_Out_BN", bnPoolFeatures22, isTraining, useConvDropOut, keepProbConv)
+    convFeatures32 = mConvBuilder.create_convolution(
+        convName="Conv_3_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=2, 
+        inFeatures=bnPoolFeatures22,
+        inNumFeatures=k*8, 
+        convRadius=1.2)
+    convFeatures32 = tf.concat([poolFeatures22, convFeatures32], 1)
 
-    #### Compute hierarchy
-    newSampledFeatures = newCurrFeatures
-
-    #### Convolutions
-    currRadius = 1.2
-    currSampledPts = sampledPts[2]
-    currSampledBatchIds = sampledBatchIds[2]
-    currSampledFeatures = newSampledFeatures
-
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('2grid_3', currSampledPts, 
-        currSampledBatchIds, currSampledFeatures, aabbMin, aabbMax, batchSize, currRadius)
-    pdfs, startIndexs, packedNeighs = prepare_conv('2pre_conv_3', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, currRadius, 0.25)
-    sortFeatures = batch_norm_RELU_drop_out("2Conv_3_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("2Conv_3_Reduce", sortFeatures, k*8, k*8)
-    sortFeatures = batch_norm_RELU_drop_out("2Conv_3_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    currFeatures = compute_convolution("2Conv_3", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, currRadius, k*8, k*8, isTraining, fullConv = False)
-            
-    currPts = newCurrPts
-    currBatchIds = newCurrBatchsIds
-    currFeatures = tf.concat([currFeatures, newCurrFeatures], 1)
-
-    ############################################ Fourth level convolutions
-
-    #### Pooling
-    newCurrPts = sampledPts[3]
-    newCurrBatchsIds = sampledBatchIds[3]
-    sortPts, sortBatchs, sortFeatures, cellIndexs, _ = distribute_grid('2grid_pool_3', currPts, 
-        currBatchIds, currFeatures, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1)
-    pdfs, startIndexs, packedNeighs = prepare_conv('2pre_pool_3', newCurrPts, newCurrBatchsIds, sortPts, sortBatchs, 
-        cellIndexs, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1, 0.20)
-    sortFeatures = batch_norm_RELU_drop_out("2Pool_3_Reduce_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    sortFeatures = reduce_channels("2Pool_3", sortFeatures, k*16, k*32)
-    sortFeatures = batch_norm_RELU_drop_out("2Pool_3_BN", sortFeatures, isTraining, useConvDropOut, keepProbConv)
-    newCurrFeatures = compute_convolution("2Pool_3", sortPts, sortFeatures, sortBatchs, pdfs, newCurrPts, startIndexs, 
-            packedNeighs, aabbMin, aabbMax, batchSize, math.sqrt(3.0)+0.1, k*32, k*32, isTraining, fullConv = False)
+    # Pooling
+    convFeatures32 = batch_norm_RELU_drop_out("Reduce_Pool_3_2_In_BN", convFeatures32, isTraining, useConvDropOut, keepProbConv)
+    convFeatures32 = conv_1x1("Reduce_Pool_3_2", convFeatures32, k*16, k*32)
+    convFeatures32 = batch_norm_RELU_drop_out("Reduce_Pool_3_2_Out_BN", convFeatures32, isTraining, useConvDropOut, keepProbConv)
+    poolFeatures32 = mConvBuilder.create_convolution(
+        convName="Pool_3_2", 
+        inPointHierarchy=mPointHierarchy,
+        inPointLevel=2, 
+        outPointLevel=3, 
+        inFeatures=convFeatures32,
+        inNumFeatures=k*32, 
+        convRadius=math.sqrt(3.0)+0.1,
+        KDEWindow= 0.2)
 
     #Fully connected MLP - Global features.
-    finalInput = batch_norm_RELU_drop_out("2BNRELUDROP_final", newCurrFeatures, isTraining, useConvDropOut, keepProbConv)
-    finalLogits2 = fully_connected(finalInput, k*32, k*16, k*8, numOutCat, "2Final_Logits", keepProbFull, isTraining, useDropOutFull)
+    finalInput2 = batch_norm_RELU_drop_out("2BNRELUDROP_final", poolFeatures32, isTraining, useConvDropOut, keepProbConv)
+    finalLogits2 = MLP_2_hidden(finalInput2, k*32, k*16, k*8, numOutCat, "2Final_Logits", keepProbFull, isTraining, useDropOutFull)
 
     ############################################ PATH DROPOUT
     counter = tf.constant(0.0, dtype=tf.float32)

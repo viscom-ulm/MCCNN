@@ -26,6 +26,7 @@ REGISTER_OP("SpatialConv")
     .Attr("combin: bool")
     .Attr("batch_size: int")
     .Attr("radius: float")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("features: float32")
     .Input("batch_ids: int32")
@@ -56,6 +57,7 @@ REGISTER_OP("SpatialConvGrad")
     .Attr("combin: bool")
     .Attr("batch_size: int")
     .Attr("radius: float")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("features: float32")
     .Input("batch_ids: int32")
@@ -92,6 +94,7 @@ REGISTER_OP("SpatialConvGrad")
 
 
 void spatialConvCPU(
+    bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
     int pNumOutFeatures,
@@ -116,6 +119,7 @@ void spatialConvCPU(
     float* pOutFeatues);
 
 void spatialConvGradsCPU(
+    bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
     int pNumOutFeatures,
@@ -162,6 +166,8 @@ class SpatialConvOp : public OpKernel {
 
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvOp expects a positive batch size"));
+
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
         }
 
         void Compute(OpKernelContext* context) override {
@@ -169,7 +175,7 @@ class SpatialConvOp : public OpKernel {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0);
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("SpatialConvOp expects points with the following dimensions (numPoints, 3)"));
+                ("SpatialConvOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SpatialConvOp expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -179,7 +185,7 @@ class SpatialConvOp : public OpKernel {
             const Tensor& inFeaturesTensor=context->input(1);
             OP_REQUIRES(context, inFeaturesTensor.dims() == 2 &&
                 inFeaturesTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0), errors::InvalidArgument
-                ("SpatialConvOp expects as feature inputs the following dimensions (numPoints, numFeatures)"));
+                ("SpatialConvOp expects as feature inputs the following dimensions (numPoints)"));
             int numInFeatures = inFeaturesTensor.shape().dim_size(1);
             auto inFeaturesFlat = inFeaturesTensor.flat<float>();
             const float* inFeaturesPtr = &(inFeaturesFlat(0));
@@ -195,14 +201,14 @@ class SpatialConvOp : public OpKernel {
             const Tensor& inPDFsTensor=context->input(3);
             OP_REQUIRES(context, inPDFsTensor.dims() == 2 &&
                 inPDFsTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("SpatialConvOp expects as feature inputs the following dimensions (numPoints, 1)"));
+                ("SpatialConvOp expects as feature inputs the following dimensions (numPoints)"));
             int numNeighs = inPDFsTensor.shape().dim_size(0);
             auto inPDFsTensorFlat = inPDFsTensor.flat<float>();
             const float* inPDFsTensorPtr = &(inPDFsTensorFlat(0));
 
             const Tensor& inSamplesTensor = context->input(4);
             OP_REQUIRES(context, inSamplesTensor.dims() == 2, errors::InvalidArgument
-                ("SpatialConvOp expects points with the following dimensions (numPoints, 3)"));
+                ("SpatialConvOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inSamplesTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SpatialConvOp expects points with three components"));
             int numSamples = inSamplesTensor.shape().dim_size(0);
@@ -293,7 +299,7 @@ class SpatialConvOp : public OpKernel {
             auto outConvFeaturesFlat = outConvFeatures->flat<float>();
             float* outConvFeaturesPtr = &(outConvFeaturesFlat(0));
 
-            spatialConvCPU(numNeighs, numInFeatures, numOutFeatures_, numSamples, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
+            spatialConvCPU(scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
                 startIndexTensorPtr, packedNeighTensorPtr, inAABBMinPtr, inAABBMaxPtr, inWeightsHidd1Ptr, inBiasHidd1Ptr, inWeightsHidd2Ptr, inBiasHidd2Ptr, 
                 inWeightsOutLayerPtr, inBiasOutLayerPtr, outConvFeaturesPtr);
         }
@@ -304,6 +310,7 @@ class SpatialConvOp : public OpKernel {
         bool    combin_;
         float   radius_;
         int     batchSize_;
+        bool    scaleInv_;
 };
 
 class SpatialConvGradOp : public OpKernel {
@@ -320,6 +327,8 @@ class SpatialConvGradOp : public OpKernel {
 
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvGradOp expects a positive batch size"));
+
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
         }
 
         void Compute(OpKernelContext* context) override {
@@ -327,7 +336,7 @@ class SpatialConvGradOp : public OpKernel {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0);
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("SpatialConvGradOp expects points with the following dimensions (numPoints, 3)"));
+                ("SpatialConvGradOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SpatialConvGradOp expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -337,7 +346,7 @@ class SpatialConvGradOp : public OpKernel {
             const Tensor& inFeaturesTensor=context->input(1);
             OP_REQUIRES(context, inFeaturesTensor.dims() == 2 &&
                 inFeaturesTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0), errors::InvalidArgument
-                ("SpatialConvGradOp expects as feature inputs the following dimensions (numPoints, numFeatures)"));
+                ("SpatialConvGradOp expects as feature inputs the following dimensions (numPoints)"));
             int numInFeatures = inFeaturesTensor.shape().dim_size(1);
             auto inFeaturesFlat = inFeaturesTensor.flat<float>();
             const float* inFeaturesPtr = &(inFeaturesFlat(0));
@@ -353,14 +362,14 @@ class SpatialConvGradOp : public OpKernel {
             const Tensor& inPDFsTensor=context->input(3);
             OP_REQUIRES(context, inPDFsTensor.dims() == 2 &&
                 inPDFsTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("SpatialConvGradOp expects as feature inputs the following dimensions (numPoints, 1)"));
+                ("SpatialConvGradOp expects as feature inputs the following dimensions (numPoints)"));
             int numNeighs = inPDFsTensor.shape().dim_size(0);
             auto inPDFsTensorFlat = inPDFsTensor.flat<float>();
             const float* inPDFsTensorPtr = &(inPDFsTensorFlat(0));
 
             const Tensor& inSamplesTensor = context->input(4);
             OP_REQUIRES(context, inSamplesTensor.dims() == 2, errors::InvalidArgument
-                ("SpatialConvGradOp expects points with the following dimensions (numPoints, 3)"));
+                ("SpatialConvGradOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inSamplesTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("SpatialConvGradOp expects points with three components"));
             int numSamples = inSamplesTensor.shape().dim_size(0);
@@ -484,7 +493,7 @@ class SpatialConvGradOp : public OpKernel {
             float* biasOutGradsPtr = &(biasOutGradsFlat(0));
 
 
-            spatialConvGradsCPU(numNeighs, numInFeatures, numOutFeatures_, numSamples, numPoints, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
+            spatialConvGradsCPU(scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, numPoints, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
                 startIndexTensorPtr, packedNeighTensorPtr, inAABBMinPtr, inAABBMaxPtr, inWeightsHidd1Ptr, inBiasHidd1Ptr, inWeightsHidd2Ptr, inBiasHidd2Ptr, 
                 inWeightsOutLayerPtr, inBiasOutLayerPtr, inOutFeatureGradsPtr, featureGradientsPtr, weight1GradsPtr, weight2GradsPtr, weightOutGradsPtr,
                 bias1GradsPtr, bias2GradsPtr, biasOutGradsPtr);
@@ -496,6 +505,7 @@ class SpatialConvGradOp : public OpKernel {
         bool    combin_;
         float   radius_;
         int     batchSize_;
+        bool    scaleInv_;
 };
 
 REGISTER_KERNEL_BUILDER(Name("SpatialConv").Device(DEVICE_GPU), SpatialConvOp);

@@ -26,6 +26,7 @@ REGISTER_OP("ComputePDF")
     .Attr("window: float")
     .Attr("batch_size: int")
     .Attr("radius: float")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("batch_ids: int32")
     .Input("start_indexs: int32")
@@ -40,6 +41,7 @@ REGISTER_OP("ComputePDF")
     });
 
 void computeDPFsCPU(
+    const bool pScaleInv,
     const float pWindow, 
     const int numSamples,
     const int pNumNeighbors,
@@ -64,13 +66,15 @@ class ComputePDFOp : public OpKernel {
 
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("ComputePDFOp expects a positive batch size"));
+
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
         }
 
         void Compute(OpKernelContext* context) override {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0);
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("ComputePDFOp expects points with the following dimensions (numPoints, 3)"));
+                ("ComputePDFOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("ComputePDFOp expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -81,7 +85,7 @@ class ComputePDFOp : public OpKernel {
             OP_REQUIRES(context, inBatchTensor.dims() == 2 &&
                 inBatchTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0) &&
                 inBatchTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("ComputePDFOp expects as batch ids input the following dimensions (numPoints, 1)"));
+                ("FindNeighborsOp expects as batch ids input the following dimensions (numPoints)"));
             auto inBatchFlat = inBatchTensor.flat<int>();
             const int* inBatchPtr = &(inBatchFlat(0));
 
@@ -107,14 +111,14 @@ class ComputePDFOp : public OpKernel {
             const Tensor& inAABBMinTensor = context->input(4);
             OP_REQUIRES(context, inAABBMinTensor.dims() == 2 
                 && inAABBMinTensor.shape().dim_size(0) == batchSize_ && inAABBMinTensor.shape().dim_size(1) == 3, errors::InvalidArgument
-                ("ComputePDFOp expects a minimum point of the bounding box with 3 components"));
+                ("FindNeighborsOp expects a minimum point of the bounding box with 3 components"));
             auto inAABBMinFlat = inAABBMinTensor.flat<float>();
             const float* inAABBMinPtr = &(inAABBMinFlat(0));
 
             const Tensor& inAABBMaxTensor = context->input(5);
             OP_REQUIRES(context, inAABBMaxTensor.dims() == 2  
                 && inAABBMaxTensor.shape().dim_size(0) == batchSize_ && inAABBMaxTensor.shape().dim_size(1) == 3, errors::InvalidArgument
-                ("ComputePDFOp expects a maximum point of the bounding box with 3 components"));
+                ("FindNeighborsOp expects a maximum point of the bounding box with 3 components"));
             auto inAABBMaxFlat = inAABBMaxTensor.flat<float>();
             const float* inAABBMaxPtr = &(inAABBMaxFlat(0));
 
@@ -125,7 +129,7 @@ class ComputePDFOp : public OpKernel {
             float* pdfsPtr = &(pdfsFlat(0));
 
             //Compute the pdfs
-            computeDPFsCPU(window_, numSamples, numNeighs, radius_, inPointsPtr, inBatchPtr, inAABBMinPtr, inAABBMaxPtr, 
+            computeDPFsCPU(scaleInv_, window_, numSamples, numNeighs, radius_, inPointsPtr, inBatchPtr, inAABBMinPtr, inAABBMaxPtr, 
                 startIndexTensorPtr, packedNeighTensorPtr, pdfsPtr);
         }
 
@@ -134,6 +138,7 @@ class ComputePDFOp : public OpKernel {
         float   window_;
         float   radius_;
         int     batchSize_;
+        bool    scaleInv_;
 };
 
 REGISTER_KERNEL_BUILDER(Name("ComputePDF").Device(DEVICE_GPU), ComputePDFOp);

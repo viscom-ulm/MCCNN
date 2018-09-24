@@ -38,6 +38,7 @@
  *  @param  pOutPDFs                Output parameter with the pdfs.
  */
 __global__ void computePDFs(
+    const bool pScaleInv, 
     const float pWindow,
     const int numSamples,
     const int pNumNeighbors,
@@ -50,7 +51,7 @@ __global__ void computePDFs(
     const int* __restrict__ pNeigbors,
     float* __restrict__ pOutPDFs) 
 {
-    int currentNeighborIndex = threadIdx.x + blockIdx.x*blockDim.x + blockIdx.y*gridDim.x*blockDim.x + blockIdx.z*gridDim.x*gridDim.y*blockDim.x;
+    int currentNeighborIndex = threadIdx.x + blockDim.x*(blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y);
     if(currentNeighborIndex < pNumNeighbors){
 
         int neighborIndex = currentNeighborIndex * 2;
@@ -62,7 +63,7 @@ __global__ void computePDFs(
             pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
-        float scaledRadius = pRadius*maxAabbSize;        
+        float scaledRadius = (pScaleInv)?pRadius*maxAabbSize:pRadius;   
         
         int centralPoint = pNeigbors[neighborIndex+1];
         int initIter = pStartIndexs[centralPoint];
@@ -95,6 +96,7 @@ __global__ void computePDFs(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 void computeDPFsCPU(
+    const bool scaleInv, 
     const float pWindow, 
     const int numSamples,
     const int pNumNeighbors,
@@ -111,7 +113,7 @@ void computeDPFsCPU(
     //Compute the PDF.
     dim3 gridDimension = computeBlockGrid(pNumNeighbors, NEIGHBOR_BLOCK_PDF_SIZE);
 
-    computePDFs<<<gridDimension, NEIGHBOR_BLOCK_PDF_SIZE>>>(pWindow, numSamples, pNumNeighbors, 
+    computePDFs<<<gridDimension, NEIGHBOR_BLOCK_PDF_SIZE>>>(scaleInv, pWindow, numSamples, pNumNeighbors, 
         pRadius, pAABBMin, pAABBMax, pInPts, pInBatchIds, pStartIndexs, pPackedIndexs, pPDFs);
 
     gpuErrchk(cudaPeekAtLastError());

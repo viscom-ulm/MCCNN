@@ -13,10 +13,6 @@
 #ifndef CUDA_KERNEL_UTILS_H_
 #define CUDA_KERNEL_UTILS_H_
 
-//#define PRINT_CONV_INFO
-
-#define BLOCK_MLP_SIZE 8
-
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -44,6 +40,7 @@ inline dim3 computeBlockGrid(const unsigned long long int pNumElements, const in
         auxDim += (finalDimension.y%2!=0)?1:0;
         finalDimension.y = auxDim;
     }
+
     return finalDimension;
 }
 

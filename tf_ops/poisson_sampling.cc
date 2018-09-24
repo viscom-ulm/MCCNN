@@ -26,6 +26,7 @@ using namespace tensorflow;
 REGISTER_OP("PoissonSampling")
     .Attr("radius: float")
     .Attr("batch_size: int")
+    .Attr("scale_inv: bool")
     .Input("points: float32")
     .Input("batch_ids: int32")
     .Input("cell_indexs: int32")
@@ -65,6 +66,7 @@ REGISTER_OP("GetSampledFeaturesGrad")
     });
 
 int samplePointCloud(
+    const bool scaleInv, 
     const float pRadius,
     const int pNumPoints,
     const int pBatchSize,
@@ -113,6 +115,8 @@ class PoissonSamplingOp : public OpKernel {
 
             OP_REQUIRES_OK(context, context->GetAttr("batch_size", &batchSize_));
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("PoissonSamplingOp expects a positive batch size")); 
+
+            OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
         }
 
         void Compute(OpKernelContext* context) override {
@@ -120,7 +124,7 @@ class PoissonSamplingOp : public OpKernel {
             //Process input points.
             const Tensor& inPointsTensor = context->input(0);
             OP_REQUIRES(context, inPointsTensor.dims() == 2, errors::InvalidArgument
-                ("PoissonSamplingOp expects points with the following dimensions (numPoints, 3)"));
+                ("PoissonSamplingOp expects points with the following dimensions (batchSize, pointComponents)"));
             OP_REQUIRES(context, inPointsTensor.shape().dim_size(1) == 3, errors::InvalidArgument
                 ("PoissonSamplingOp expects points with three components"));
             int numPoints = inPointsTensor.shape().dim_size(0);
@@ -131,7 +135,7 @@ class PoissonSamplingOp : public OpKernel {
             OP_REQUIRES(context, inBatchTensor.dims() == 2 &&
                 inBatchTensor.shape().dim_size(0) == inPointsTensor.shape().dim_size(0) &&
                 inBatchTensor.shape().dim_size(1) == 1, errors::InvalidArgument
-                ("PoissonSamplingOp expects as batch ids input the following dimensions (numPoints, 1)"));
+                ("PoissonSamplingOp expects as batch ids input the following dimensions (numPoints)"));
             auto inBatchFlat = inBatchTensor.flat<int>();
             const int* inBatchPtr = &(inBatchFlat(0));
 
@@ -178,7 +182,7 @@ class PoissonSamplingOp : public OpKernel {
             bool* tmpUsedBoolPtr = &(tmpUsedBoolFlat(0));
 
             //Sample the point cloud
-            int numSelSamples = samplePointCloud(radius_, numPoints, batchSize_, numCells, inAABBMinPtr, inAABBMaxPtr,
+            int numSelSamples = samplePointCloud(scaleInv_, radius_, numPoints, batchSize_, numCells, inAABBMinPtr, inAABBMaxPtr,
                 inPointsPtr, inBatchPtr, inCellIdsPtr, tmpPtsPtr, tmpBatchsPtr, tmpIndexsPtr, tmpUsedBoolPtr);
 
             //Create the output tensors.
@@ -203,6 +207,7 @@ class PoissonSamplingOp : public OpKernel {
 
         float   radius_;
         int     batchSize_;
+        bool    scaleInv_;
 };
 
 class GetSampledFeaturesOp : public OpKernel {
