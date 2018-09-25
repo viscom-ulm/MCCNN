@@ -383,7 +383,7 @@ __global__ void determine_cell_size(
         float maxAabbSize = max(max(pAABBMax[currBatchId*3] - pAABBMin[currBatchId*3], 
             pAABBMax[currBatchId*3+1] - pAABBMin[currBatchId*3+1]), 
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
-        int numCells = (int)ceil(maxAabbSize/pCellSize);
+        int numCells = (int)(maxAabbSize/pCellSize);
         numCells = (numCells == 0)?1:numCells;
         //printf("Num cells: %d\n", numCells);
         *pNumCells = numCells;
@@ -402,7 +402,7 @@ int determineNumCells(
     const float* pAABBMax)
 {
     if(pScaleInv){
-        int numCellsCPU = (int)ceil(1.0f/pCellSize);
+        int numCellsCPU = (int)(1.0f/pCellSize);
         numCellsCPU = (numCellsCPU == 0)?1:numCellsCPU;
         return numCellsCPU;
     }
