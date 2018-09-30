@@ -150,7 +150,7 @@ if __name__ == '__main__':
         numBatchesXEpoch = numBatchesXEpoch + 1
     numTestModels = mTestDataSet.get_num_models()
     categories = mTrainDataSet.get_categories()
-    print categories
+    print(categories)
     print("Train models: " + str(numTrainModels))
     print("Test models: " + str(numTestModels))
 

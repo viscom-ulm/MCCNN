@@ -387,9 +387,10 @@ class ConvolutionBuilder:
 
             # Create the convolution.
             initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
+            initializerBiases = tf.zeros_initializer()
 
             blockSize = get_block_size()
-
+            
             if currMultiFeatureConv:
                 numOutNeurons = inNumFeatures*currNumOutFeatures
             else:
@@ -400,16 +401,16 @@ class ConvolutionBuilder:
 
             weights = tf.get_variable(convName+'_weights', [3, blockSize*numBlocks], initializer=initializer)
             tf.add_to_collection(self.decayLossCollection_, weights)
-            biases = tf.get_variable(convName+'_biases', [blockSize*numBlocks], initializer=initializer)
+            biases = tf.get_variable(convName+'_biases', [blockSize*numBlocks], initializer=initializerBiases)
             weights2 = tf.get_variable(convName+'_weights2', [numBlocks, blockSize, blockSize], initializer=initializer)
             weights2 = tf.reshape(weights2, [blockSize, numBlocks*blockSize])
             tf.add_to_collection(self.decayLossCollection_, weights2)
-            biases2 = tf.get_variable(convName+'_biases2', [numBlocks, blockSize], initializer=initializer)
+            biases2 = tf.get_variable(convName+'_biases2', [numBlocks, blockSize], initializer=initializerBiases)
             biases2 = tf.reshape(biases2, [numBlocks*blockSize])
             weights3 = tf.get_variable(convName+'_weights3', [numBlocks, blockSize, blockSize], initializer=initializer)
             weights3 = tf.reshape(weights3, [blockSize, numBlocks*blockSize])
             tf.add_to_collection(self.decayLossCollection_, weights3)
-            biases3 = tf.get_variable(convName+'_biases3', [numBlocks, blockSize], initializer=initializer)
+            biases3 = tf.get_variable(convName+'_biases3', [numBlocks, blockSize], initializer=initializerBiases)
             biases3 = tf.reshape(biases3, [numBlocks*blockSize])
 
             return spatial_conv(currGridTuple[0], sortFeatures, currGridTuple[1], 
