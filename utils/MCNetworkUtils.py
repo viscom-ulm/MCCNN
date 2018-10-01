@@ -23,16 +23,15 @@ def MLP_2_hidden(features, numInputFeatures, hidden1_units, hidden2_units, numOu
         useInitBN (bool): Boolean that indicates if an initial batch normalization should be used.
     """
 
-    initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, 
-        mode='FAN_AVG', uniform=True)
+    initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
 
     if useInitBN:
         features = tf.layers.batch_normalization(inputs = features, training = isTraining, name = layerName+"_BN_Init")
     
     # Hidden 1
-    weights = tf.Variable(initializer([numInputFeatures, hidden1_units]), name='weights')
+    weights = tf.Variable(initializer([numInputFeatures, hidden1_units]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([hidden1_units]), name='biases')
+    biases = tf.Variable(tf.zeros([hidden1_units]), name=layerName+'_biases')
     mul1 = tf.matmul(features, weights) + biases
     mul1 = tf.layers.batch_normalization(inputs = mul1, training = isTraining, name = layerName+"_BN_h1")
     hidden1 = tf.nn.relu(mul1)
@@ -40,9 +39,9 @@ def MLP_2_hidden(features, numInputFeatures, hidden1_units, hidden2_units, numOu
     # Hidden 2
     if useDropOut:
         hidden1 = tf.nn.dropout(hidden1, keepProb)
-    weights = tf.Variable(initializer([hidden1_units, hidden2_units]), name='weights')
+    weights = tf.Variable(initializer([hidden1_units, hidden2_units]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([hidden2_units]), name='biases')
+    biases = tf.Variable(tf.zeros([hidden2_units]), name=layerName+'_biases')
     mul2 = tf.matmul(hidden1, weights) + biases
     mul2 = tf.layers.batch_normalization(inputs = mul2, training = isTraining, name = layerName+"_BN_h2")
     hidden2 = tf.nn.relu(mul2)
@@ -50,9 +49,9 @@ def MLP_2_hidden(features, numInputFeatures, hidden1_units, hidden2_units, numOu
     # Linear
     if useDropOut:
         hidden2 = tf.nn.dropout(hidden2, keepProb)
-    weights = tf.Variable(initializer([hidden2_units, numOutFeatures]), name='weights')
+    weights = tf.Variable(initializer([hidden2_units, numOutFeatures]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([numOutFeatures]), name='biases')
+    biases = tf.Variable(tf.zeros([numOutFeatures]), name=layerName+'_biases')
     logits = tf.matmul(hidden2, weights) + biases
     return logits
 
@@ -75,9 +74,9 @@ def MLP_1_hidden(features, numInputFeatures, hidden_units, numOutFeatures, layer
 
     initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
     # Hidden 1
-    weights = tf.Variable(initializer([numInputFeatures, hidden_units]), name='weights')
+    weights = tf.Variable(initializer([numInputFeatures, hidden_units]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([hidden_units]), name='biases')
+    biases = tf.Variable(tf.zeros([hidden_units]), name=layerName+'_biases')
     mul = tf.matmul(features, weights) + biases
     mul = tf.layers.batch_normalization(inputs = mul, training = isTraining, name = layerName+"_BN_h")
     hidden = tf.nn.relu(mul)
@@ -85,9 +84,9 @@ def MLP_1_hidden(features, numInputFeatures, hidden_units, numOutFeatures, layer
     # Linear
     if useDropOut:
         hidden = tf.nn.dropout(hidden, keepProb)
-    weights = tf.Variable(initializer([hidden_units, numOutFeatures]), name='weights')
+    weights = tf.Variable(initializer([hidden_units, numOutFeatures]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([numOutFeatures]), name='biases')
+    biases = tf.Variable(tf.zeros([numOutFeatures]), name=layerName+'_biases')
     linear = tf.matmul(hidden, weights) + biases
     return linear
 
@@ -104,9 +103,9 @@ def conv_1x1(layerName, inputs, numInputs, numOutFeatures):
     """
 
     initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
-    weights = tf.Variable(initializer([numInputs, numOutFeatures]), name='weights')
+    weights = tf.Variable(initializer([numInputs, numOutFeatures]), name=layerName+'_weights')
     tf.add_to_collection('weight_decay_loss', weights)
-    biases = tf.Variable(tf.zeros([numOutFeatures]), name='biases')
+    biases = tf.Variable(tf.zeros([numOutFeatures]), name=layerName+'_biases')
     reducedOutput = tf.matmul(inputs, weights) + biases
     return reducedOutput
 
