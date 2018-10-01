@@ -83,9 +83,8 @@ class PointHierarchy:
         self.hierarchyName_ = hierarchyName        
 
         # Compute the point cloud bounding box.
-        with tf.name_scope(hierarchyName+'_aabbLayer'):
-            aabbMin, aabbMax = compute_aabb(inPoints, inBatchIds, 
-                batchSize, self.relativeRadius_)
+        aabbMin, aabbMax = compute_aabb(inPoints, inBatchIds, 
+            batchSize, self.relativeRadius_)
         self.aabbMin_ = aabbMin
         self.aabbMax_ = aabbMax
 
@@ -104,21 +103,18 @@ class PointHierarchy:
 
             print("Level: "+str(level+1)+" | Poisson Disk Radius: "+str(currRadius))
 
-            # Define the scope.
-            with tf.name_scope(hierarchyName+'_'+str(currRadius)):
+            # Distribute points into a regular grid.
+            keys, indexs = sort_points_step1(currPts, currBatchIds, self.aabbMin_, 
+                self.aabbMax_, self.batchSize_, currRadius, self.relativeRadius_)
+            sortPts, sortBatchs, sortFeatures, cellIndexs = sort_points_step2(currPts, 
+                currBatchIds, currFeatures, keys, indexs, self.aabbMin_, self.aabbMax_, 
+                self.batchSize_, currRadius, self.relativeRadius_)
 
-                # Distribute points into a regular grid.
-                keys, indexs = sort_points_step1(currPts, currBatchIds, self.aabbMin_, 
-                    self.aabbMax_, self.batchSize_, currRadius, self.relativeRadius_)
-                sortPts, sortBatchs, sortFeatures, cellIndexs = sort_points_step2(currPts, 
-                    currBatchIds, currFeatures, keys, indexs, self.aabbMin_, self.aabbMax_, 
-                    self.batchSize_, currRadius, self.relativeRadius_)
-
-                # Use poisson disk sampling algorithm for the given radius.
-                sampledPts, sampledBatchsIds, sampledIndexs = poisson_sampling(
-                    sortPts, sortBatchs, cellIndexs, aabbMin, aabbMax, currRadius, batchSize, self.relativeRadius_)
-                sampledFeatures = get_sampled_features(sampledIndexs, sortFeatures)
-                transformedIndexs = transform_indexs(sampledIndexs, indexs)
+            # Use poisson disk sampling algorithm for the given radius.
+            sampledPts, sampledBatchsIds, sampledIndexs = poisson_sampling(
+                sortPts, sortBatchs, cellIndexs, aabbMin, aabbMax, currRadius, batchSize, self.relativeRadius_)
+            sampledFeatures = get_sampled_features(sampledIndexs, sortFeatures)
+            transformedIndexs = transform_indexs(sampledIndexs, indexs)
 
             # Save the resulting point cloud.
             self.points_.append(sampledPts)
@@ -337,86 +333,84 @@ class ConvolutionBuilder:
         print("    Features out: "+str(currNumOutFeatures))
         print("    Radius: "+str(convRadius))
 
-        # Define the scope.
-        with tf.name_scope(convName):
         
-            # Check if the grid distribution was already computed.
-            if keyGrid in self.cacheGrids_:
-                currGridTuple = self.cacheGrids_[keyGrid]
-                sortFeatures = sort_features(inFeatures, currGridTuple[3])
-            else:
-                keys, indexs = sort_points_step1(inPointHierarchy.points_[inPointLevel], 
-                    inPointHierarchy.batchIds_[inPointLevel], inPointHierarchy.aabbMin_, 
-                    inPointHierarchy.aabbMax_, inPointHierarchy.batchSize_, 
-                    convRadius, currRelativeRadius)
-                sortPts, sortBatchs, sortFeatures, cellIndexs = sort_points_step2(
-                    inPointHierarchy.points_[inPointLevel], 
-                    inPointHierarchy.batchIds_[inPointLevel], inFeatures, keys, indexs, 
-                    inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
-                    inPointHierarchy.batchSize_, convRadius, currRelativeRadius)
-                currGridTuple = (sortPts, sortBatchs, cellIndexs, indexs)
-                self.cacheGrids_[keyGrid] = currGridTuple
-
-            # Check if the neighbor information was previously computed.
-            if keyNeighs in self.cacheNeighs_:
-                currNeighTuple = self.cacheNeighs_[keyNeighs]
-            else:
-                startIndexs, packedNeighs = find_neighbors(
-                    currOutPointHierarchy.points_[currOutPointLevel], 
-                    currOutPointHierarchy.batchIds_[currOutPointLevel], 
-                    currGridTuple[0], currGridTuple[2], inPointHierarchy.aabbMin_, 
-                    inPointHierarchy.aabbMax_, convRadius, inPointHierarchy.batchSize_, 
-                    currRelativeRadius)
-                currNeighTuple = (startIndexs, packedNeighs)
-                self.cacheNeighs_[keyNeighs] = currNeighTuple
-
-            # Check if the pdf was previously computed.
-            if keyPDF in self.cachePDFs_:
-                currPDFs = self.cachePDFs_[keyPDF]
-            else:
-                if currUsePDF:
-                    currPDFs = compute_pdf(currGridTuple[0], currGridTuple[1], 
-                        inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
-                        startIndexs, packedNeighs, currKDEWindow, convRadius, 
-                        inPointHierarchy.batchSize_, currRelativeRadius)
-                else:
-                    neighShape = tf.shape(currNeighTuple[1])
-                    currPDFs = tf.ones(neighShape[0])
-
-                self.cachePDFs_[keyPDF] = currPDFs
-
-            # Create the convolution.
-            initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
-            initializerBiases = tf.zeros_initializer()
-
-            blockSize = get_block_size()
-            
-            if currMultiFeatureConv:
-                numOutNeurons = inNumFeatures*currNumOutFeatures
-            else:
-                numOutNeurons = inNumFeatures
-            numBlocks = int(numOutNeurons/blockSize)
-            if numOutNeurons%blockSize!=0:
-                numBlocks = numBlocks+1
-
-            weights = tf.get_variable(convName+'_weights', [3, blockSize*numBlocks], initializer=initializer)
-            tf.add_to_collection(self.decayLossCollection_, weights)
-            biases = tf.get_variable(convName+'_biases', [blockSize*numBlocks], initializer=initializerBiases)
-            weights2 = tf.get_variable(convName+'_weights2', [numBlocks, blockSize, blockSize], initializer=initializer)
-            weights2 = tf.reshape(weights2, [blockSize, numBlocks*blockSize])
-            tf.add_to_collection(self.decayLossCollection_, weights2)
-            biases2 = tf.get_variable(convName+'_biases2', [numBlocks, blockSize], initializer=initializerBiases)
-            biases2 = tf.reshape(biases2, [numBlocks*blockSize])
-            weights3 = tf.get_variable(convName+'_weights3', [numBlocks, blockSize, blockSize], initializer=initializer)
-            weights3 = tf.reshape(weights3, [blockSize, numBlocks*blockSize])
-            tf.add_to_collection(self.decayLossCollection_, weights3)
-            biases3 = tf.get_variable(convName+'_biases3', [numBlocks, blockSize], initializer=initializerBiases)
-            biases3 = tf.reshape(biases3, [numBlocks*blockSize])
-
-            return spatial_conv(currGridTuple[0], sortFeatures, currGridTuple[1], 
-                currPDFs, currOutPointHierarchy.points_[currOutPointLevel], 
-                currNeighTuple[0], currNeighTuple[1], 
-                inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
-                weights, weights2, weights3, biases, biases2, biases3, 
-                currNumOutFeatures, currMultiFeatureConv, inPointHierarchy.batchSize_, 
+        # Check if the grid distribution was already computed.
+        if keyGrid in self.cacheGrids_:
+            currGridTuple = self.cacheGrids_[keyGrid]
+            sortFeatures = sort_features(inFeatures, currGridTuple[3])
+        else:
+            keys, indexs = sort_points_step1(inPointHierarchy.points_[inPointLevel], 
+                inPointHierarchy.batchIds_[inPointLevel], inPointHierarchy.aabbMin_, 
+                inPointHierarchy.aabbMax_, inPointHierarchy.batchSize_, 
                 convRadius, currRelativeRadius)
+            sortPts, sortBatchs, sortFeatures, cellIndexs = sort_points_step2(
+                inPointHierarchy.points_[inPointLevel], 
+                inPointHierarchy.batchIds_[inPointLevel], inFeatures, keys, indexs, 
+                inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
+                inPointHierarchy.batchSize_, convRadius, currRelativeRadius)
+            currGridTuple = (sortPts, sortBatchs, cellIndexs, indexs)
+            self.cacheGrids_[keyGrid] = currGridTuple
+
+        # Check if the neighbor information was previously computed.
+        if keyNeighs in self.cacheNeighs_:
+            currNeighTuple = self.cacheNeighs_[keyNeighs]
+        else:
+            startIndexs, packedNeighs = find_neighbors(
+                currOutPointHierarchy.points_[currOutPointLevel], 
+                currOutPointHierarchy.batchIds_[currOutPointLevel], 
+                currGridTuple[0], currGridTuple[2], inPointHierarchy.aabbMin_, 
+                inPointHierarchy.aabbMax_, convRadius, inPointHierarchy.batchSize_, 
+                currRelativeRadius)
+            currNeighTuple = (startIndexs, packedNeighs)
+            self.cacheNeighs_[keyNeighs] = currNeighTuple
+
+        # Check if the pdf was previously computed.
+        if keyPDF in self.cachePDFs_:
+            currPDFs = self.cachePDFs_[keyPDF]
+        else:
+            if currUsePDF:
+                currPDFs = compute_pdf(currGridTuple[0], currGridTuple[1], 
+                    inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
+                    startIndexs, packedNeighs, currKDEWindow, convRadius, 
+                    inPointHierarchy.batchSize_, currRelativeRadius)
+            else:
+                neighShape = tf.shape(currNeighTuple[1])
+                currPDFs = tf.ones(neighShape[0])
+
+            self.cachePDFs_[keyPDF] = currPDFs
+
+        # Create the convolution.
+        initializer = tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True)
+        initializerBiases = tf.zeros_initializer()
+
+        blockSize = get_block_size()
+        
+        if currMultiFeatureConv:
+            numOutNeurons = inNumFeatures*currNumOutFeatures
+        else:
+            numOutNeurons = inNumFeatures
+        numBlocks = int(numOutNeurons/blockSize)
+        if numOutNeurons%blockSize!=0:
+            numBlocks = numBlocks+1
+
+        weights = tf.get_variable(convName+'_weights', [3, blockSize*numBlocks], initializer=initializer)
+        tf.add_to_collection(self.decayLossCollection_, weights)
+        biases = tf.get_variable(convName+'_biases', [blockSize*numBlocks], initializer=initializerBiases)
+        weights2 = tf.get_variable(convName+'_weights2', [numBlocks, blockSize, blockSize], initializer=initializer)
+        weights2 = tf.reshape(weights2, [blockSize, numBlocks*blockSize])
+        tf.add_to_collection(self.decayLossCollection_, weights2)
+        biases2 = tf.get_variable(convName+'_biases2', [numBlocks, blockSize], initializer=initializerBiases)
+        biases2 = tf.reshape(biases2, [numBlocks*blockSize])
+        weights3 = tf.get_variable(convName+'_weights3', [numBlocks, blockSize, blockSize], initializer=initializer)
+        weights3 = tf.reshape(weights3, [blockSize, numBlocks*blockSize])
+        tf.add_to_collection(self.decayLossCollection_, weights3)
+        biases3 = tf.get_variable(convName+'_biases3', [numBlocks, blockSize], initializer=initializerBiases)
+        biases3 = tf.reshape(biases3, [numBlocks*blockSize])
+
+        return spatial_conv(currGridTuple[0], sortFeatures, currGridTuple[1], 
+            currPDFs, currOutPointHierarchy.points_[currOutPointLevel], 
+            currNeighTuple[0], currNeighTuple[1], 
+            inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
+            weights, weights2, weights3, biases, biases2, biases3, 
+            currNumOutFeatures, currMultiFeatureConv, inPointHierarchy.batchSize_, 
+            convRadius, currRelativeRadius)
