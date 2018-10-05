@@ -371,7 +371,7 @@ class ConvolutionBuilder:
             if currUsePDF:
                 currPDFs = compute_pdf(currGridTuple[0], currGridTuple[1], 
                     inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
-                    startIndexs, packedNeighs, currKDEWindow, convRadius, 
+                    currNeighTuple[0], currNeighTuple[1], currKDEWindow, convRadius, 
                     inPointHierarchy.batchSize_, currRelativeRadius)
             else:
                 neighShape = tf.shape(currNeighTuple[1])
