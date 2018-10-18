@@ -56,31 +56,6 @@ def compute_pdf(inPts, inBatchIds, aabbMin, aabbMax, startIndexs, neighbors, win
     return MCConv_module.compute_pdf(inPts, inBatchIds, startIndexs, neighbors, aabbMin, aabbMax, window, batchSize, radius, scaleInv)
 tf.NoGradient('ComputePDF')
 
-def expand_neighs_pts(inPts, inBatchIds, inPts2, neighbors, aabbMin, aabbMax, radius, batchSize):
-    return MCConv_module.expand_neighs_pts(inPts, inBatchIds, inPts2, neighbors, aabbMin, aabbMax, radius, batchSize)
-tf.NoGradient('ExpandNeighsPts')
-
-def expand_neighs_features(inFeatures, neighbors):
-    return MCConv_module.expand_neighs_features(inFeatures, neighbors)
-@tf.RegisterGradient("ExpandNeighsFeatures")
-def _expand_neighs_grad(op, *grads):
-    featureGrads = MCConv_module.expand_neighs_features_grad(op.inputs[0], grads[0], op.inputs[1])
-    return [featureGrads, None]
-
-def contract_neighs(inFeatures, startIndexs, neighbors):
-    return MCConv_module.contract_neighs(inFeatures, startIndexs, neighbors)
-@tf.RegisterGradient("ContractNeighs")
-def _contract_neighs_grad(op, *grads):
-    featureGrads = MCConv_module.contract_neighs_grad(grads[0], op.inputs[1], op.inputs[2])
-    return [featureGrads, None, None]
-
-def batch_reduce_sum(inFeatures, inBatchIds, batchSize):
-    return MCConv_module.batch_reduce_sum(inFeatures, inBatchIds, batchSize)
-@tf.RegisterGradient("BatchReduceSum")
-def _batch_reduce_sum_grad(op, *grads):
-    featureGrads = MCConv_module.batch_reduce_sum_grad(grads[0], op.inputs[1])
-    return [featureGrads, None]
-
 def poisson_sampling(inPts, inBatchIds, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv):
     return MCConv_module.poisson_sampling(inPts, inBatchIds, cellIndexs, aabbMin, aabbMax, radius, batchSize, scaleInv)
 tf.NoGradient('PoissonSampling')
@@ -93,14 +68,14 @@ def _get_sampled_features_grad(op, *grads):
     return [None, featureGrads]
 
 def spatial_conv(inPts, inFeatures, inBatchIds, inPDFs, inSamplePts, neighStartIndexs, packedNeighs, aabbMin, aabbMax,
-    weights1, weights2, weightsOut, biases1, biases2, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv):
+    weights1, weights2, weightsOut, biases1, biases2, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv, avg):
     return MCConv_module.spatial_conv(inPts, inFeatures, inBatchIds, inPDFs, inSamplePts, neighStartIndexs, packedNeighs, aabbMin, aabbMax,
-        weights1, biases1, weights2, biases2, weightsOut, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv)
+        weights1, biases1, weights2, biases2, weightsOut, biasesOut, numOutFeatures, combin, batchSize, radius, scaleInv, avg)
 @tf.RegisterGradient("SpatialConv")
-def _contract_neighs_grad(op, *grads):
+def _spatial_conv_grad(op, *grads):
     featureGrads, weights1Grads, biases1Grads, weights2Grads, biases2Grads, weightsOutGrads, biasesOutGrads = \
         MCConv_module.spatial_conv_grad(op.inputs[0], op.inputs[1], op.inputs[2], op.inputs[3], op.inputs[4], op.inputs[5],
         op.inputs[6], op.inputs[7], op.inputs[8], op.inputs[9], op.inputs[10], op.inputs[11], op.inputs[12], op.inputs[13],
         op.inputs[14], grads[0], op.get_attr("num_out_features"), op.get_attr("combin"), op.get_attr("batch_size"), 
-        op.get_attr("radius"), op.get_attr("scale_inv"))
+        op.get_attr("radius"), op.get_attr("scale_inv"), op.get_attr("avg"))
     return [None, featureGrads, None, None, None, None, None, None, None, weights1Grads, biases1Grads, weights2Grads, biases2Grads, weightsOutGrads, biasesOutGrads]

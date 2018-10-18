@@ -385,7 +385,7 @@ __global__ void determine_cell_size(
             pAABBMax[currBatchId*3+2] - pAABBMin[currBatchId*3+2]);
         int numCells = (int)(maxAabbSize/pCellSize);
         numCells = (numCells == 0)?1:numCells;
-        //printf("Num cells: %d\n", numCells);
+        //printf("Num cells: %d %f\n", numCells, maxAabbSize);
         *pNumCells = numCells;
     }
 }

@@ -82,6 +82,8 @@ __device__ void evaluateMLP(
 
 /**
  *  Method to evaluate the MLP.
+ *  @param  pAVG                    Boolean that indicates if the results is divided by the number of neighbors or not.
+ *  @param  pScaleInv               Boolean that indicates if the radius is defined relative to the bounding box.
  *  @param  pNumPoints              Number of points.
  *  @param  pNumNeighbors           Number of neighboring points.
  *  @param  pNumFeatures            Number of input features per point.
@@ -102,6 +104,7 @@ __device__ void evaluateMLP(
  *  @param  pOutFeatures            Output parameter with the list of output features.
  */
 __global__ void evaluateMLPKernel(
+    const bool pAvg,
     const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
@@ -159,7 +162,7 @@ __global__ void evaluateMLPKernel(
         float currPDF = pPDFs[currentNeighborIndex];
         int initIter = pStartIndexs[centralPointIndex];
         int endIter = (centralPointIndex < pNumPoints-1)?pStartIndexs[centralPointIndex+1]:pNumNeighbors;
-        float numNeighbors = (float)(endIter-initIter);
+        float numNeighbors = (pAvg)?(float)(endIter-initIter):1.0;
         int featureIndex = currentPointIndex*pNumFeatures;
         int outFeatureIndex = centralPointIndex*pNumOutFeatures;
 
@@ -230,6 +233,8 @@ __device__ void evaluateMLPNoComb(
 
 /**
  *  Method to evaluate the MLP.
+ *  @param  pAVG                    Boolean that indicates if the results is divided by the number of neighbors or not.
+ *  @param  pScaleInv               Boolean that indicates if the radius is defined relative to the bounding box.
  *  @param  pNumPoints              Number of points.
  *  @param  pNumNeighbors           Number of neighboring points.
  *  @param  pNumFeatures            Number of input features per point.
@@ -249,6 +254,7 @@ __device__ void evaluateMLPNoComb(
  *  @param  pOutFeatures            Output parameter with the list of output features.
  */
 __global__ void evaluateMLPNoCombinKernel(
+    const bool pAvg,
     const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
@@ -305,7 +311,7 @@ __global__ void evaluateMLPNoCombinKernel(
         float currPDF = pPDFs[currentNeighborIndex];
         int initIter = pStartIndexs[centralPointIndex];
         int endIter = (centralPointIndex < pNumPoints-1)?pStartIndexs[centralPointIndex+1]:pNumNeighbors;
-        float numNeighbors = (float)(endIter-initIter);
+        float numNeighbors = (pAvg)?(float)(endIter-initIter):1.0;
         int featureIndex = currentPointIndex*pNumFeatures;
         int outFeatureIndex = centralPointIndex*pNumFeatures;
         
@@ -442,6 +448,8 @@ __device__ void computedconvj_d(
 
 /**
  *  Method to evaluate the MLP.
+ *  @param  pAVG                    Boolean that indicates if the results is divided by the number of neighbors or not.
+ *  @param  pScaleInv               Boolean that indicates if the radius is defined relative to the bounding box.
  *  @param  pNumPoints              Number of points.
  *  @param  pNumNeighbors           Number of neighboring points.
  *  @param  pNumFeatures            Number of input features per point.
@@ -469,6 +477,7 @@ __device__ void computedconvj_d(
  *  @param  pPointsGrads            Output parameter with the list of gradients for the points.
  */
 __global__ void computedconvj_dKernel(
+    const bool pAvg,
     const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
@@ -533,7 +542,7 @@ __global__ void computedconvj_dKernel(
         float currPDF = pPDFs[currentNeighborIndex];
         int initIter = pStartIndexs[centralPointIndex];
         int endIter = (centralPointIndex < pNumPoints-1)?pStartIndexs[centralPointIndex+1]:pNumNeighbors;
-        float numNeighbors = (float)(endIter-initIter);
+        float numNeighbors = (pAvg)?(float)(endIter-initIter):1.0;
         int featureIndex = currentPointIndex*pNumFeatures;
         int outFeatureIndex = centralPointIndex*pNumOutFeatures;
 
@@ -672,6 +681,8 @@ __device__ void computedconvj_dNoCombin(
 
 /**
  *  Method to evaluate the MLP.
+ *  @param  pAVG                    Boolean that indicates if the results is divided by the number of neighbors or not.
+ *  @param  pScaleInv               Boolean that indicates if the radius is defined relative to the bounding box.
  *  @param  pNumPoints              Number of points.
  *  @param  pNumNeighbors           Number of neighboring points.
  *  @param  pNumFeatures            Number of input features per point.
@@ -698,6 +709,7 @@ __device__ void computedconvj_dNoCombin(
  *  @param  pPointsGrads            Output parameter with the list of gradients for the points.
  */
 __global__ void computedconvj_dNoCombinKernel(
+    const bool pAvg,
     const bool pScaleInv,
     const int pNumPoints,
     const int pNumNeighbors,
@@ -761,7 +773,7 @@ __global__ void computedconvj_dNoCombinKernel(
         float currPDF = pPDFs[currentNeighborIndex];
         int initIter = pStartIndexs[centralPointIndex];
         int endIter = (centralPointIndex < pNumPoints-1)?pStartIndexs[centralPointIndex+1]:pNumNeighbors;
-        float numNeighbors = (float)(endIter-initIter);
+        float numNeighbors = (pAvg)?(float)(endIter-initIter):1.0;
         int featureIndex = currentPointIndex*pNumFeatures;
         int outFeatureIndex = centralPointIndex*pNumFeatures;
 
@@ -784,6 +796,7 @@ __global__ void computedconvj_dNoCombinKernel(
 ////////////////////////////////////////////////////////////////////////////////// CPU
 
 void spatialConvCPU(
+    bool pAvg,
     bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
@@ -827,7 +840,7 @@ void spatialConvCPU(
             (unsigned long long int)BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         evaluateMLPKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*2*sizeof(float)>>>(
-            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pNumOutFeatures, pRadius, pAABBMin, pAABBMax, 
+            pAvg, pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pNumOutFeatures, pRadius, pAABBMin, pAABBMax, 
             pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, pSamples, pInPoints, pBatchIds, 
             pInFeatures, pStartIndexs, pPackedNeighs, pPDFs, pOutFeatues);
 
@@ -843,7 +856,7 @@ void spatialConvCPU(
             (unsigned long long int)BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         evaluateMLPNoCombinKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*2*sizeof(float)>>>(
-            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pRadius, pAABBMin, pAABBMax, 
+            pAvg, pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, pRadius, pAABBMin, pAABBMax, 
             pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, pSamples, pInPoints, pBatchIds, 
             pInFeatures, pStartIndexs, pPackedNeighs, pPDFs, pOutFeatues);
 
@@ -860,6 +873,7 @@ void spatialConvCPU(
 }
 
 void spatialConvGradsCPU(
+    bool pAvg,
     bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
@@ -915,7 +929,7 @@ void spatialConvGradsCPU(
         dim3 gridDimension = computeBlockGrid(pNumNeighbors*numBlocksPerPoint*BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         computedconvj_dKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*4*sizeof(float)>>>(
-            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
+            pAvg, pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
             pNumOutFeatures, pRadius, pAABBMin, pAABBMax, pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, 
             pSamples, pInPoints, pBatchIds, pInFeatures, pInOutFeatueGrads, pStartIndexs, pPackedNeighs, pPDFs, pWeights1Grads, 
             pWeight2Grads, pWeightOutGrads, pBiases1Grads, pBiases2Grads, pBiasesOutGrads, pOutFeatureGrads);
@@ -936,7 +950,7 @@ void spatialConvGradsCPU(
         dim3 gridDimension = computeBlockGrid(pNumNeighbors*numBlocksPerPoint*BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE);
 
         computedconvj_dNoCombinKernel<<<gridDimension, EXECUTION_BLOCK_MLP_SIZE, EXECUTION_BLOCK_MLP_SIZE*4*sizeof(float)>>>(
-            pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
+            pAvg, pScaleInv, pNumSamples, pNumNeighbors, pNumInFeatures, 
             pRadius, pAABBMin, pAABBMax, pWeights1, pWeights2, pWeightsOut, pBiases1, pBiases2, pBiasesOut, 
             pSamples, pInPoints, pBatchIds, pInFeatures, pInOutFeatueGrads, pStartIndexs, pPackedNeighs, pPDFs, pWeights1Grads, 
             pWeight2Grads, pWeightOutGrads, pBiases1Grads, pBiases2Grads, pBiasesOutGrads, pOutFeatureGrads);

@@ -27,6 +27,7 @@ REGISTER_OP("SpatialConv")
     .Attr("batch_size: int")
     .Attr("radius: float")
     .Attr("scale_inv: bool")
+    .Attr("avg: bool")
     .Input("points: float32")
     .Input("features: float32")
     .Input("batch_ids: int32")
@@ -58,6 +59,7 @@ REGISTER_OP("SpatialConvGrad")
     .Attr("batch_size: int")
     .Attr("radius: float")
     .Attr("scale_inv: bool")
+    .Attr("avg: bool")
     .Input("points: float32")
     .Input("features: float32")
     .Input("batch_ids: int32")
@@ -94,6 +96,7 @@ REGISTER_OP("SpatialConvGrad")
 
 
 void spatialConvCPU(
+    bool pAvg,
     bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
@@ -119,6 +122,7 @@ void spatialConvCPU(
     float* pOutFeatues);
 
 void spatialConvGradsCPU(
+    bool pAvg,
     bool pScaleInv,
     int pNumNeighbors,
     int pNumInFeatures,
@@ -168,6 +172,8 @@ class SpatialConvOp : public OpKernel {
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvOp expects a positive batch size"));
 
             OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
+
+            OP_REQUIRES_OK(context, context->GetAttr("avg", &avg_));
         }
 
         void Compute(OpKernelContext* context) override {
@@ -299,7 +305,7 @@ class SpatialConvOp : public OpKernel {
             auto outConvFeaturesFlat = outConvFeatures->flat<float>();
             float* outConvFeaturesPtr = &(outConvFeaturesFlat(0));
 
-            spatialConvCPU(scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
+            spatialConvCPU(avg_, scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
                 startIndexTensorPtr, packedNeighTensorPtr, inAABBMinPtr, inAABBMaxPtr, inWeightsHidd1Ptr, inBiasHidd1Ptr, inWeightsHidd2Ptr, inBiasHidd2Ptr, 
                 inWeightsOutLayerPtr, inBiasOutLayerPtr, outConvFeaturesPtr);
         }
@@ -311,6 +317,7 @@ class SpatialConvOp : public OpKernel {
         float   radius_;
         int     batchSize_;
         bool    scaleInv_;
+        bool    avg_;
 };
 
 class SpatialConvGradOp : public OpKernel {
@@ -329,6 +336,8 @@ class SpatialConvGradOp : public OpKernel {
             OP_REQUIRES(context, batchSize_ > 0, errors::InvalidArgument("SpatialConvGradOp expects a positive batch size"));
 
             OP_REQUIRES_OK(context, context->GetAttr("scale_inv", &scaleInv_));
+
+            OP_REQUIRES_OK(context, context->GetAttr("avg", &avg_));
         }
 
         void Compute(OpKernelContext* context) override {
@@ -493,7 +502,7 @@ class SpatialConvGradOp : public OpKernel {
             float* biasOutGradsPtr = &(biasOutGradsFlat(0));
 
 
-            spatialConvGradsCPU(scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, numPoints, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
+            spatialConvGradsCPU(avg_, scaleInv_, numNeighs, numInFeatures, numOutFeatures_, numSamples, numPoints, combin_, radius_, inPointsPtr, batchIdsPtr,  inFeaturesPtr, inPDFsTensorPtr, inSamplesPtr, 
                 startIndexTensorPtr, packedNeighTensorPtr, inAABBMinPtr, inAABBMaxPtr, inWeightsHidd1Ptr, inBiasHidd1Ptr, inWeightsHidd2Ptr, inBiasHidd2Ptr, 
                 inWeightsOutLayerPtr, inBiasOutLayerPtr, inOutFeatureGradsPtr, featureGradientsPtr, weight1GradsPtr, weight2GradsPtr, weightOutGradsPtr,
                 bias1GradsPtr, bias2GradsPtr, biasOutGradsPtr);
@@ -506,6 +515,7 @@ class SpatialConvGradOp : public OpKernel {
         float   radius_;
         int     batchSize_;
         bool    scaleInv_;
+        bool    avg_;
 };
 
 REGISTER_KERNEL_BUILDER(Name("SpatialConv").Device(DEVICE_GPU), SpatialConvOp);

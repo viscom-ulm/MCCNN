@@ -18,8 +18,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'tf_ops'))
 from MCConvModule import compute_aabb, sort_points_step1, sort_points_step2, sort_features, sort_features_back, \
-    compute_pdf, expand_neighs_features, contract_neighs, poisson_sampling, get_sampled_features, spatial_conv, \
-    get_block_size, transform_indexs, find_neighbors
+    compute_pdf, poisson_sampling, get_sampled_features, spatial_conv, get_block_size, transform_indexs, find_neighbors
 
 
 class PointHierarchy:
@@ -143,8 +142,10 @@ class ConvolutionBuilder:
         relativeRadius_ (bool): Boolean that indicates if the radius is relative to the 
             bounding box of the point clouds. This default value can be overwritten when 
             creating a convolution.
-        self.usePDF_ (bool): Boolean that indicates if the pdf is used during computations. 
+        usePDF_ (bool): Boolean that indicates if the pdf is used during computations. 
             This default value can be overwritten when creating a convolution.
+        useAVG_ (bool): Boolean that indicates if the convolution result is divided by
+            the number of neighbors.
         decayLossCollection_ (string): Weight decay loss collection name.
         cacheGrids_ (dictionary of tuples (sortPts, sortBatchs, cellIndexs, indexs)): Cache
             of the resulting tensors of distributing points into a regular grid of a specific
@@ -160,6 +161,7 @@ class ConvolutionBuilder:
         KDEWindow = 0.25,
         relativeRadius = True,
         usePDF = True,
+        useAVG = True,
         decayLossCollection = 'weight_decay_loss'):
         """Constructor.
 
@@ -176,6 +178,8 @@ class ConvolutionBuilder:
             usePDF (bool): Boolean that indicates if the pdf is
                 used during computations. This default value can be 
                 overwritten when creating a convolution.
+            useAVG (bool): Boolean that indicates if the convolution result is 
+                divided by the number of neighbors.
             decayLossCollection (string): Weight decay loss collection name.
         """
 
@@ -189,6 +193,7 @@ class ConvolutionBuilder:
         self.KDEWindow_ = KDEWindow
         self.relativeRadius_ = relativeRadius
         self.usePDF_ = usePDF
+        self.useAVG_ = useAVG
         self.decayLossCollection_ = decayLossCollection
 
         print("########## Convolution Builder")
@@ -254,7 +259,8 @@ class ConvolutionBuilder:
         outNumFeatures = None,
         KDEWindow = None,
         relativeRadius = None,
-        usePDF = None):
+        usePDF = None,
+        useAVG = None):
         """Method to create a convolution layer. 
         
         This method uses a cache to store the operations to distribute points into a regular 
@@ -282,6 +288,8 @@ class ConvolutionBuilder:
                 is relative to the bounding box of the point clouds.
             usePDF (bool): Boolean that indicates if the pdf will
                 be used during computations. 
+            useAVG (bool): Boolean that indicates if the convolution result is 
+                divided by the number of neighbors.
 
         Returns:
             n2 x outNumFeatures tensor: Convoluted feature tensor.
@@ -293,6 +301,7 @@ class ConvolutionBuilder:
         currKDEWindow = self.KDEWindow_
         currRelativeRadius = self.relativeRadius_
         currUsePDF = self.usePDF_
+        currUseAVG = self.useAVG_
         currOutPointHierarchy = inPointHierarchy
         currOutPointLevel = inPointLevel
 
@@ -306,6 +315,8 @@ class ConvolutionBuilder:
             currRelativeRadius = relativeRadius
         if not(usePDF is None):
             currUsePDF = usePDF
+        if not(useAVG is None):
+            currUseAVG = useAVG
         if not(outNumFeatures is None):
             currNumOutFeatures = outNumFeatures
         if not(outPointLevel is None):
@@ -375,7 +386,7 @@ class ConvolutionBuilder:
                     inPointHierarchy.batchSize_, currRelativeRadius)
             else:
                 neighShape = tf.shape(currNeighTuple[1])
-                currPDFs = tf.ones(neighShape[0])
+                currPDFs = tf.ones([neighShape[0], 1], tf.float32)
 
             self.cachePDFs_[keyPDF] = currPDFs
 
@@ -413,4 +424,4 @@ class ConvolutionBuilder:
             inPointHierarchy.aabbMin_, inPointHierarchy.aabbMax_, 
             weights, weights2, weights3, biases, biases2, biases3, 
             currNumOutFeatures, currMultiFeatureConv, inPointHierarchy.batchSize_, 
-            convRadius, currRelativeRadius)
+            convRadius, currRelativeRadius, currUseAVG)
