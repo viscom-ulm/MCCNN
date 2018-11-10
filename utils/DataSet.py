@@ -402,7 +402,7 @@ class DataSet(with_metaclass(abc.ABCMeta)):
                 else:
                     probVal = lowProbability
                 # Determine if we select the point.
-                rndNum = self.randomState_.random()
+                rndNum = self.randomState_.random_sample()
                 if rndNum < probVal:
                     # Store the point in the output buffers.
                     auxOutPts.append(currPt)
@@ -465,7 +465,7 @@ class DataSet(with_metaclass(abc.ABCMeta)):
                     )/(aabbSize[largestAxis]*0.6)
                 probVal = pow(np.clip(probVal, 0.01, 1.0), 1.0/2.0)
                 # Determine if we select the point.
-                rndNum = self.randomState_.random()
+                rndNum = self.randomState_.random_sample()
                 if rndNum < probVal:
                     # Store the point in the output buffers.
                     auxOutPts.append(currPt)
@@ -523,7 +523,7 @@ class DataSet(with_metaclass(abc.ABCMeta)):
                 probVal = np.dot(viewDir, normals[i])
                 probVal = pow(np.clip(probVal, 0.0, 1.0), 0.5)
                 # Determine if we select the point.
-                rndNum = self.randomState_.random()
+                rndNum = self.randomState_.random_sample()
                 if rndNum < probVal:
                     # Store the point in the output buffers.
                     auxOutPts.append(points[i])
