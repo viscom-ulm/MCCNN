@@ -550,7 +550,7 @@ class DataSet(with_metaclass(abc.ABCMeta)):
 
 
     def _non_uniform_sampling_occlusion_(self, viewDir, points, normals, inNumPoints, inFeatures=None, 
-        inLabels=None, numPoints=0, screenResolution=64):
+        inLabels=None, numPoints=0, screenResolution=128):
         """Method to non-uniformly sample a point cloud using the occlusion protocol. A point is selected
         if it is visible from the view direction.
 
