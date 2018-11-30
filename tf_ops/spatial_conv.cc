@@ -48,7 +48,7 @@ REGISTER_OP("SpatialConv")
         int num_out_features;
         TF_RETURN_IF_ERROR(c->GetAttr("num_out_features", &num_out_features));
         shape_inference::ShapeHandle outputDims = c->MakeShape
-            ({c->Dim(c->input(2), 0), num_out_features});
+            ({c->Dim(c->input(4), 0), num_out_features});
         c->set_output(0, outputDims);
         return Status::OK();
     });
