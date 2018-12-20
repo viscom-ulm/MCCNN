@@ -15,8 +15,6 @@
 #include <iostream>
 #include <fstream>
 
-#include "curand_kernel.h"
-
 #include "cuda_kernel_utils.h"
 
 #define EXECUTION_BLOCK_MLP_SIZE 128
