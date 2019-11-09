@@ -57,11 +57,11 @@ def save_model(modelName, points, labels = None, colors = None, modLabel = 0):
                     currColor = colors[currLabel]
                     myFile.write(","+str(currColor[0])+",")
                     myFile.write(str(currColor[1])+",")
-                    myFile.write(str(currColor[2])+"\n")
+                    myFile.write(str(currColor[2]))
                 else:
                     currLabels = labels[it]
                     for label in currLabels:
                         myFile.write(","+str(label))
-                    myFile.write("\n")                
+            myFile.write("\n")                
         
     myFile.close()
